@@ -20,4 +20,8 @@ pub struct FactConfig {
     /// Whether a small health_check probe should be run
     #[arg(long)]
     pub health_check: bool,
+
+    /// Force events to be output as JSON to stdout
+    #[arg(long, short)]
+    pub json: bool,
 }
