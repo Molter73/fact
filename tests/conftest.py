@@ -54,6 +54,7 @@ def fact(docker_client, temp_dir, server):
         'http://127.0.0.1:9999',
         '-p', temp_dir,
         '--health-check',
+        '--json',
     ]
     container = docker_client.containers.run(
         'fact:latest',
