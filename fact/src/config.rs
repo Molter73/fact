@@ -20,4 +20,8 @@ pub struct FactConfig {
     /// Whether a small healthcheck probe should be run
     #[arg(long)]
     pub healthcheck: bool,
+
+    /// Whether to perform a pre flight check
+    #[arg(long, default_value_t = false)]
+    pub skip_preflight: bool,
 }
