@@ -1,0 +1,44 @@
+name: Main CI
+
+on:
+  push:
+    branches:
+    - tfg
+  pull_request:
+
+
+jobs:
+  basic:
+    runs-on: ${{ (matrix.arch == 'arm64' && 'fedora-arm') || 'fedora-x86' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - amd64
+          # For the time being we have no arm runner
+          # - arm64
+        rust-version:
+          - stable
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ matrix.rust-version }}-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Check code format
+      run: make format-check
+    - name: Build
+      run: cargo +${{ matrix.rust-version }} build
+    - name: Lint
+      run: cargo +${{ matrix.rust-version }} clippy -- -D warnings
+    - name: Test
+      run: cargo +${{ matrix.rust-version }} test --all-features
