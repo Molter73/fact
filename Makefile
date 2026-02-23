@@ -13,12 +13,18 @@ mock-server:
 	make -C mock-server
 
 image:
-	docker build \
+	$(DOCKER) build \
 		-f Containerfile \
 		--build-arg FACT_VERSION=$(FACT_VERSION) \
 		--build-arg RUST_VERSION=$(RUST_VERSION) \
 		-t $(FACT_IMAGE_NAME) \
 		$(CURDIR)
+
+licenses:THIRD_PARTY_LICENSES.html
+
+THIRD_PARTY_LICENSES.html:Cargo.lock
+	cargo install cargo-about
+	cargo about generate --format handlebars -o THIRD_PARTY_LICENSES.html about_html.hbs
 
 integration-tests:
 	make -C tests
@@ -37,4 +43,4 @@ format:
 	cargo fmt
 	make -C fact-ebpf format
 
-.PHONY: tag mock-server integration-tests image image-name clean
+.PHONY: tag mock-server integration-tests image image-name licenses clean

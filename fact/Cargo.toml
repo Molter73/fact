@@ -1,6 +1,6 @@
 [package]
 name = "fact"
-version = "0.2.0-dev"
+version = "0.3.0-dev"
 edition = "2021"
 
 license.workspace = true
@@ -35,6 +35,7 @@ fact-ebpf = { path = "../fact-ebpf" }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+regex = { workspace = true }
 
 [build-dependencies]
 anyhow = { workspace = true }

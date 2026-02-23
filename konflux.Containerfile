@@ -1,4 +1,4 @@
-FROM registry.access.redhat.com/ubi9/ubi@sha256:2c9bb68a869abf7d7417f6639509ab5eb8500d8429ea11ab59e677be5545162b AS builder
+FROM registry.access.redhat.com/ubi9/ubi@sha256:b8923f58ef6aebe2b8f543f8f6c5af15c6f9aeeef34ba332f33bf7610012de0c AS builder
 
 ARG FACT_TAG
 RUN echo "Checking required FACT_TAG"; [[ "${FACT_TAG}" != "" ]]
@@ -18,17 +18,20 @@ COPY . .
 
 RUN cargo build --release
 
-FROM registry.access.redhat.com/ubi9/ubi-minimal@sha256:6fc28bcb6776e387d7a35a2056d9d2b985dc4e26031e98a2bd35a7137cd6fd71
+FROM registry.access.redhat.com/ubi9/ubi-minimal@sha256:759f5f42d9d6ce2a705e290b7fc549e2d2cd39312c4fa345f93c02e4abb8da95
 
 ARG FACT_TAG
 
 LABEL \
+    com.redhat.component="rhacs-fact-container" \
     com.redhat.license_terms="https://www.redhat.com/agreements" \
     description="This image supports file activity data collection for Red Hat Advanced Cluster Security for Kubernetes" \
     distribution-scope="public" \
     io.k8s.description="This image supports file activity data collection for Red Hat Advanced Cluster Security for Kubernetes" \
+    io.k8s.display-name="fact" \
     io.openshift.tags="rhacs,fact,stackrox" \
     maintainer="Red Hat, Inc." \
+    name="advanced-cluster-security/rhacs-fact-rhel9" \
     # Custom Snapshot creation in `operator-bundle-pipeline` depends on source-location label to be set correctly.
     source-location="https://github.com/stackrox/fact" \
     summary="File activity data collection for Red Hat Advanced Cluster Security for Kubernetes" \
@@ -48,5 +51,7 @@ RUN microdnf install -y openssl-libs && \
     rm -rf /var/cache/yum
 
 COPY --from=builder /app/target/release/fact /usr/local/bin
+
+COPY LICENSE-APACHE LICENSE-MIT LICENSE-GPL2 /licenses/
 
 ENTRYPOINT ["fact"]
