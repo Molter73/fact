@@ -7,6 +7,7 @@
 #include "maps.h"
 #include "events.h"
 #include "bound_path.h"
+#include "upid.h"
 
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
@@ -18,6 +19,20 @@ char _license[] SEC("license") = "Dual MIT/GPL";
 #define FMODE_WRITE ((fmode_t)(1 << 1))
 #define FMODE_PWRITE ((fmode_t)(1 << 4))
 #define FMODE_CREATED ((fmode_t)(1 << 20))
+
+SEC("iter/task")
+int iter_task(struct bpf_iter__task* ctx) {
+  struct seq_file* seq = ctx->meta->seq;
+  struct task_struct* task = ctx->task;
+  // Verifier requires this check.
+  if (task == NULL) {
+    return 0;
+  }
+
+  BPF_SEQ_PRINTF(seq, "%-8d %-8d %-8d %s\n", task->tgid, task->pid, get_task_upid(task), task->comm);
+
+  return 0;
+}
 
 SEC("lsm/file_open")
 int BPF_PROG(trace_file_open, struct file* file) {

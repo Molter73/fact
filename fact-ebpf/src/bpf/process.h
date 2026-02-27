@@ -6,6 +6,7 @@
 #include "d_path.h"
 #include "maps.h"
 #include "types.h"
+#include "upid.h"
 
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_core_read.h>
@@ -109,6 +110,7 @@ __always_inline static int64_t process_fill(process_t* p, bool use_bpf_d_path) {
   p->gid = (uid_gid >> 32) & 0xFFFFFFFF;
   p->login_uid = task->loginuid.val;
   p->pid = (bpf_get_current_pid_tgid() >> 32) & 0xFFFFFFFF;
+  p->upid = get_task_upid(task);
   u_int64_t err = bpf_get_current_comm(p->comm, TASK_COMM_LEN);
   if (err != 0) {
     bpf_printk("Failed to fill task comm");

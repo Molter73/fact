@@ -10,7 +10,8 @@ use checks::Checks;
 use libc::c_char;
 use log::{error, info};
 use tokio::{
-    io::unix::AsyncFd,
+    fs::File,
+    io::{unix::AsyncFd, BufReader},
     sync::{mpsc, watch},
     task::JoinHandle,
 };
@@ -46,13 +47,14 @@ impl Bpf {
         // Include the BPF object as raw bytes at compile-time and load it
         // at runtime.
         let obj = aya::EbpfLoader::new()
-            .set_global("host_mount_ns", &host_info::get_host_mount_ns(), true)
-            .set_global(
+            .override_global("host_mount_ns", &host_info::get_host_mount_ns(), true)
+            .override_global(
                 "path_hooks_support_bpf_d_path",
                 &(checks.path_hooks_support_bpf_d_path as u8),
                 true,
             )
-            .set_max_entries(RINGBUFFER_NAME, ringbuf_size * 1024)
+            .allow_unsupported_maps()
+            .map_max_entries(RINGBUFFER_NAME, ringbuf_size * 1024)
             .load(fact_ebpf::EBPF_OBJ)?;
 
         let paths = Vec::new();
@@ -145,14 +147,22 @@ impl Bpf {
 
     fn load_progs(&mut self, btf: &Btf) -> anyhow::Result<()> {
         for (name, prog) in self.obj.programs_mut() {
-            // The format used for our hook names is `trace_<hook>`, so
-            // we can just strip trace_ to get the hook name we need for
-            // loading.
-            let Some(hook) = name.strip_prefix("trace_") else {
-                bail!("Invalid hook name: {name}");
-            };
+            // The format used for our hook names is
+            // `<type>_<hook_point>`, so we can just strip `<type>_` to
+            // get the hook name we need for loading.
             match prog {
-                Program::Lsm(prog) => prog.load(hook, btf)?,
+                Program::Lsm(prog) => {
+                    let Some(hook) = name.strip_prefix("trace_") else {
+                        bail!("Invalid hook name: {name}");
+                    };
+                    prog.load(hook, btf)?
+                }
+                Program::Iter(prog) => {
+                    let Some(name) = name.strip_prefix("iter_") else {
+                        bail!("Invalid iterator name: {name}");
+                    };
+                    prog.load(name, btf)?
+                }
                 u => unimplemented!("{u:?}"),
             }
         }
@@ -162,11 +172,34 @@ impl Bpf {
     fn attach_progs(&mut self) -> anyhow::Result<()> {
         for (_, prog) in self.obj.programs_mut() {
             match prog {
-                Program::Lsm(prog) => prog.attach()?,
+                Program::Lsm(prog) => {
+                    prog.attach()?;
+                }
+                Program::Iter(_) => {
+                    // Iterators need to be attached when attempting to
+                    // read from them, we ignore them here.
+                }
                 u => unimplemented!("{u:?}"),
             };
         }
         Ok(())
+    }
+
+    // TODO: This method will be useful once we start tracking processes.
+    #[allow(dead_code)]
+    fn iter_tasks(&mut self) -> anyhow::Result<BufReader<File>> {
+        let prog = self
+            .obj
+            .program_mut("iter_task")
+            .expect("iter_task is not recognized");
+        let Program::Iter(prog) = prog else {
+            unreachable!("Invalid program type for task iterator: {prog:#?}");
+        };
+        let link_id = prog.attach()?;
+        let link = prog.take_link(link_id)?;
+        let file = link.into_file()?;
+
+        Ok(BufReader::new(file.into()))
     }
 
     // Gather events from the ring buffer and print them out.

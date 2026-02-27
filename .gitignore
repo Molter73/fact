@@ -22,3 +22,6 @@ logs/
 # clangd and compilation database
 .cache/
 compile_commands.json
+
+# Object files (generated from manually running clang)
+*.o

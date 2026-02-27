@@ -35,6 +35,7 @@ typedef struct process_t {
   lineage_t lineage[LINEAGE_MAX];
   unsigned int lineage_len;
   char in_root_mount_ns;
+  unsigned long upid;
 } process_t;
 
 typedef struct inode_key_t {

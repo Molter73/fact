@@ -114,4 +114,17 @@ __always_inline static struct metrics_t* get_metrics() {
 uint64_t host_mount_ns;
 volatile const bool path_hooks_support_bpf_d_path;
 
+struct upid_t {
+  struct bpf_spin_lock semaphore;
+  uint64_t id;
+};
+
+struct {
+  __uint(type, BPF_MAP_TYPE_TASK_STORAGE);
+  __type(key, int);
+  __type(value, struct upid_t);
+  __uint(max_entries, 0);
+  __uint(map_flags, BPF_F_NO_PREALLOC);
+} task_upid_map SEC(".maps");
+
 // clang-format on
