@@ -67,6 +67,7 @@ pub struct Process {
     gid: u32,
     login_uid: u32,
     pid: u32,
+    upid: u64,
     in_root_mount_ns: bool,
     lineage: Vec<Lineage>,
 }
@@ -102,6 +103,7 @@ impl Process {
             gid,
             login_uid,
             pid,
+            upid: 0,
             in_root_mount_ns,
             lineage: vec![],
         }
@@ -186,6 +188,7 @@ impl TryFrom<process_t> for Process {
             gid: value.gid,
             login_uid: value.login_uid,
             pid: value.pid,
+            upid: value.upid,
             in_root_mount_ns,
             lineage,
         })
@@ -204,6 +207,7 @@ impl From<Process> for fact_api::ProcessSignal {
             gid,
             login_uid,
             pid,
+            upid: _,
             in_root_mount_ns,
             lineage,
         } = value;

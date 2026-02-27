@@ -10,7 +10,8 @@ use checks::Checks;
 use libc::c_char;
 use log::{error, info, warn};
 use tokio::{
-    io::unix::AsyncFd,
+    fs::File,
+    io::{BufReader, unix::AsyncFd},
     sync::{mpsc, watch},
     task::JoinSet,
 };
@@ -110,6 +111,7 @@ impl Bpf {
             .map_max_entries(RINGBUFFER_NAME, bpf_config.ringbuf_size() * 1024)
             .map_max_entries("inode_map", bpf_config.inodes_max())
             .map_max_entries("d_instantiate_ctx", bpf_config.d_instantiate_ctx_size())
+            .allow_unsupported_maps()
             .load(fact_ebpf::EBPF_OBJ)
             .context("failed to load eBPF object")
     }
@@ -207,28 +209,39 @@ impl Bpf {
 
     fn load_progs(&mut self, btf: &Btf, bpf_config: &BpfConfig) -> anyhow::Result<()> {
         for (name, prog) in self.obj.programs_mut() {
-            // The format used for our hook names is `trace_<hook>`, so
-            // we can just strip trace_ to get the hook name we need for
-            // loading.
-            let Some(hook) = name.strip_prefix("trace_") else {
-                bail!("Invalid hook name: {name}");
-            };
-
-            if !bpf_config.program_is_enabled(hook) {
-                info!("Skipping {hook} loading");
-                continue;
-            }
-
-            // Skip hooks that the kernel doesn't support
-            if self.checks.is_unsupported_hook(hook) {
-                info!("Skipping {hook}: not supported on this kernel");
-                continue;
-            }
-
             match prog {
-                Program::Lsm(prog) => prog.load(hook, btf)?,
+                Program::Lsm(prog) => {
+                    // The format used for our hook names is `trace_<hook>`, so
+                    // we can just strip trace_ to get the hook name we need for
+                    // loading.
+                    let Some(hook) = name.strip_prefix("trace_") else {
+                        bail!("Invalid hook name: {name}");
+                    };
+
+                    if !bpf_config.program_is_enabled(hook) {
+                        info!("Skipping {hook} loading");
+                        continue;
+                    }
+
+                    // Skip hooks that the kernel doesn't support
+                    if self.checks.is_unsupported_hook(hook) {
+                        info!("Skipping {hook}: not supported on this kernel");
+                        continue;
+                    }
+
+                    let Some(hook) = name.strip_prefix("trace_") else {
+                        bail!("Invalid hook name: {name}");
+                    };
+                    prog.load(hook, btf)?
+                }
+                Program::Iter(prog) => {
+                    let Some(name) = name.strip_prefix("iter_") else {
+                        bail!("Invalid iterator name: {name}");
+                    };
+                    prog.load(name, btf)?
+                }
                 u => unimplemented!("{u:?}"),
-            };
+            }
         }
         Ok(())
     }
@@ -254,6 +267,10 @@ impl Bpf {
         self.links = self
             .obj
             .programs_mut()
+            .filter(|(_, prog)| match prog {
+                Program::Lsm(_) => true, // only loading LSM hooks
+                _ => false,
+            })
             .filter_map(|(_, prog)| match Bpf::attach_prog(prog) {
                 Ok(link) => Some(Ok(link)),
                 Err(BpfAttachError::NotLoaded) => None,
@@ -284,6 +301,23 @@ impl Bpf {
         }
 
         is_valid
+    }
+    //
+    // TODO: This method will be useful once we start tracking processes.
+    #[allow(dead_code)]
+    fn iter_tasks(&mut self) -> anyhow::Result<BufReader<File>> {
+        let prog = self
+            .obj
+            .program_mut("iter_task")
+            .expect("iter_task is not recognized");
+        let Program::Iter(prog) = prog else {
+            unreachable!("Invalid program type for task iterator: {prog:#?}");
+        };
+        let link_id = prog.attach()?;
+        let link = prog.take_link(link_id)?;
+        let file = link.into_file()?;
+
+        Ok(BufReader::new(file.into()))
     }
 
     // Gather events from the ring buffer and print them out.

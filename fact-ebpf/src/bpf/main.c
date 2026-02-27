@@ -8,6 +8,7 @@
 #include "maps.h"
 #include "events.h"
 #include "bound_path.h"
+#include "upid.h"
 
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
@@ -57,6 +58,20 @@ char _license[] SEC("license") = "Dual MIT/GPL";
 #define FACT_BPF_PROG4(hook, args...) FACT_BPF_PROG(hook, 4, args)
 #define FACT_BPF_PROG5(hook, args...) FACT_BPF_PROG(hook, 5, args)
 #define FACT_BPF_PROG6(hook, args...) FACT_BPF_PROG(hook, 6, args)
+
+SEC("iter/task")
+int iter_task(struct bpf_iter__task* ctx) {
+  struct seq_file* seq = ctx->meta->seq;
+  struct task_struct* task = ctx->task;
+  // Verifier requires this check.
+  if (task == NULL) {
+    return 0;
+  }
+
+  BPF_SEQ_PRINTF(seq, "%-8d %-8d %-8d %s\n", task->tgid, task->pid, get_task_upid(task), task->comm);
+
+  return 0;
+}
 
 FACT_BPF_PROG1(file_open, struct file*, file) {
   struct metrics_t* m = get_metrics();
