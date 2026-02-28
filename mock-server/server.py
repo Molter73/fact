@@ -7,10 +7,10 @@ import logging
 import grpc
 from google.protobuf.json_format import MessageToJson
 
-from internalapi.sensor import sfa_iservice_pb2_grpc
+from fact_api import fact_iservice_pb2_grpc
 
 
-class FileActivityServicer(sfa_iservice_pb2_grpc.FileActivityServiceServicer):
+class FileActivityServicer(fact_iservice_pb2_grpc.FileActivityServiceServicer):
     def Communicate(self, request_iterator, context):
         for req in request_iterator:
             print(MessageToJson(req))
@@ -18,7 +18,7 @@ class FileActivityServicer(sfa_iservice_pb2_grpc.FileActivityServiceServicer):
 
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
-    sfa_iservice_pb2_grpc.add_FileActivityServiceServicer_to_server(
+    fact_iservice_pb2_grpc.add_FileActivityServiceServicer_to_server(
         FileActivityServicer(), server
     )
     server.add_insecure_port("0.0.0.0:9999")

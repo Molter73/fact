@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package fact_api;
+
+import "google/protobuf/empty.proto";
+import "fact-api/file.proto";
+
+option cc_enable_arenas = true;
+
+service FileActivityService {
+  rpc Communicate(stream FileActivity) returns (google.protobuf.Empty);
+}

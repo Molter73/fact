@@ -28,7 +28,7 @@ impl TryFrom<&lineage_t> for Lineage {
     }
 }
 
-impl From<Lineage> for fact_api::process_signal::LineageInfo {
+impl From<Lineage> for fact_api::process::LineageInfo {
     fn from(value: Lineage) -> Self {
         let Lineage { uid, exe_path } = value;
         Self {
@@ -177,7 +177,7 @@ impl TryFrom<process_t> for Process {
     }
 }
 
-impl From<Process> for fact_api::ProcessSignal {
+impl From<Process> for fact_api::Process {
     fn from(value: Process) -> Self {
         let Process {
             comm,
@@ -214,7 +214,7 @@ impl From<Process> for fact_api::ProcessSignal {
             scraped: false,
             lineage_info: lineage
                 .into_iter()
-                .map(fact_api::process_signal::LineageInfo::from)
+                .map(fact_api::process::LineageInfo::from)
                 .collect(),
             login_uid,
             username: username.to_owned(),

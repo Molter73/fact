@@ -4,8 +4,8 @@ import string
 from enum import Enum
 from typing import Any, override
 
-from internalapi.sensor.collector_pb2 import ProcessSignal
-from internalapi.sensor.sfa_pb2 import FileActivity
+from fact_api.process_pb2 import Process as FactApiProcess
+from fact_api.file_pb2 import FileActivity
 
 
 def extract_container_id(cgroup: str) -> str:
@@ -154,7 +154,7 @@ class Process:
 
     @override
     def __eq__(self, other: Any) -> bool:
-        if isinstance(other, ProcessSignal):
+        if isinstance(other, FactApiProcess):
             if self.pid is not None and self.pid != other.pid:
                 return False
 

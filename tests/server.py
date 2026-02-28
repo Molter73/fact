@@ -3,13 +3,12 @@ from collections import deque
 from threading import Event
 from time import sleep
 
-from google.protobuf.json_format import MessageToJson
 import grpc
 
-from internalapi.sensor import sfa_iservice_pb2_grpc
+from fact_api import fact_iservice_pb2_grpc
 
 
-class FileActivityService(sfa_iservice_pb2_grpc.FileActivityServiceServicer):
+class FileActivityService(fact_iservice_pb2_grpc.FileActivityServiceServicer):
     """
     GRPC server for the File Activity Service.
     This service allows clients to communicate file activity events.
@@ -21,7 +20,7 @@ class FileActivityService(sfa_iservice_pb2_grpc.FileActivityServiceServicer):
         Sets up the GRPC server, a queue for incoming requests, and an
         event for other threads to know when the server stops.
         """
-        sfa_iservice_pb2_grpc.FileActivityService.__init__(self)
+        fact_iservice_pb2_grpc.FileActivityService.__init__(self)
         self.server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
         self.queue = deque()
         self.running = Event()
@@ -40,7 +39,7 @@ class FileActivityService(sfa_iservice_pb2_grpc.FileActivityServiceServicer):
         Starts the GRPC server.
         Sets the running event once the server starts.
         """
-        sfa_iservice_pb2_grpc.add_FileActivityServiceServicer_to_server(
+        fact_iservice_pb2_grpc.add_FileActivityServiceServicer_to_server(
             self, self.server
         )
         self.server.add_insecure_port(addr)
