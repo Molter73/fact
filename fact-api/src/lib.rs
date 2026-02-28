@@ -1,1 +1,1 @@
-tonic::include_proto!("sensor");
+tonic::include_proto!("fact_api");

@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package fact_api;
+
+import "google/protobuf/timestamp.proto";
+import "fact-api/process.proto";
+
+option cc_enable_arenas = true;
+
+message FileActivityBase {
+  string path = 1;
+  string host_path = 2;
+}
+
+message FileCreation {
+  FileActivityBase activity = 1;
+}
+
+message FileUnlink {
+  FileActivityBase activity = 1;
+}
+
+message FileRename {
+  FileActivityBase old = 1;
+  FileActivityBase new = 2;
+}
+
+message FilePermissionChange {
+  FileActivityBase activity = 1;
+  uint32 mode = 2;
+}
+
+message FileOwnershipChange {
+  FileActivityBase activity = 1;
+  uint32 uid = 2;
+  uint32 gid = 3;
+  string username = 4;
+  string group = 5;
+}
+
+message FileWrite {
+  FileActivityBase activity = 1;
+}
+
+message FileOpen {
+  FileActivityBase activity = 1;
+}
+
+message FileXattrChange {
+  FileActivityBase activity = 1;
+  string xattr_name = 2;
+}
+
+enum AclTag {
+  ACL_TAG_UNSPECIFIED = 0;
+  ACL_TAG_USER_OBJ = 1;
+  ACL_TAG_USER = 2;
+  ACL_TAG_GROUP_OBJ = 3;
+  ACL_TAG_GROUP = 4;
+  ACL_TAG_MASK = 5;
+  ACL_TAG_OTHER = 6;
+}
+
+message AclEntry {
+  AclTag tag = 1;
+  uint32 perm = 2;
+  // The uid or gid for ACL_TAG_USER / ACL_TAG_GROUP entries.
+  // Set to 0xFFFFFFFF when not applicable.
+  uint32 id = 3;
+}
+
+enum AclType {
+  ACL_TYPE_UNSPECIFIED = 0;
+  ACL_TYPE_ACCESS = 1;
+  ACL_TYPE_DEFAULT = 2;
+}
+
+message FileAclChange {
+  FileActivityBase activity = 1;
+  AclType acl_type = 2;
+  // The ACL entries being set. Empty when the ACL is being removed.
+  repeated AclEntry entries = 3;
+}
+
+message FileActivity {
+  google.protobuf.Timestamp timestamp = 1;
+  Process process = 2;
+  oneof file {
+    FileCreation creation = 3;
+    FileUnlink unlink = 4;
+    FileRename rename = 5;
+    FilePermissionChange permission = 6;
+    FileOwnershipChange ownership = 7;
+    FileOpen open = 8;
+    FileWrite write = 9;
+    FileXattrChange xattr_set = 11;
+    FileXattrChange xattr_remove = 12;
+    FileAclChange acl = 13;
+  }
+  // The hostname/name of the node where the file activity occurred
+  string hostname = 10;
+}

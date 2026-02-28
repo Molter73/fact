@@ -31,8 +31,8 @@ from event import (
     EventType,
     Process,
 )
-from internalapi.sensor import sfa_iservice_pb2_grpc
-from internalapi.sensor.sfa_pb2 import FileActivity
+from fact_api import fact_iservice_pb2_grpc
+from fact_api.sensor.sfa_pb2 import FileActivity
 
 if TYPE_CHECKING:
     from opentelemetry.proto.common.v1.common_pb2 import AnyValue, KeyValue
