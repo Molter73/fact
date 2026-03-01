@@ -4,9 +4,17 @@ package fact_api;
 
 import "google/protobuf/empty.proto";
 import "fact-api/file.proto";
+import "fact-api/process.proto";
 
 option cc_enable_arenas = true;
 
+message FactMsg {
+  oneof msg {
+    FileActivity file = 1;
+    Process process = 2;
+  }
+}
+
 service FileActivityService {
-  rpc Communicate(stream FileActivity) returns (google.protobuf.Empty);
+  rpc Communicate(stream FactMsg) returns (google.protobuf.Empty);
 }

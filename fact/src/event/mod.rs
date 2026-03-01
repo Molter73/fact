@@ -196,18 +196,20 @@ impl TryFrom<&event_t> for Event {
     }
 }
 
-impl From<Event> for fact_api::FileActivity {
+impl From<Event> for fact_api::FactMsg {
     fn from(value: Event) -> Self {
         let file = fact_api::file_activity::File::from(value.file);
         let timestamp = timestamp_to_proto(value.timestamp);
         let process = fact_api::Process::from(value.process);
-
-        Self {
+        let activity = fact_api::FileActivity {
             file: Some(file),
             timestamp: Some(timestamp),
             process: Some(process),
             hostname: value.hostname.to_string(),
-        }
+        };
+        let msg = Some(fact_api::fact_msg::Msg::File(activity));
+
+        Self { msg }
     }
 }
 

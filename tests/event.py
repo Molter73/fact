@@ -4,6 +4,7 @@ import string
 from enum import Enum
 from typing import Any, override
 
+from fact_api.fact_iservice_pb2 import FactMsg
 from fact_api.process_pb2 import Process as FactApiProcess
 from fact_api.file_pb2 import FileActivity
 
@@ -281,7 +282,7 @@ class Event:
                 'actual': actual
             }
 
-    def diff(self, other: FileActivity) -> dict | None:
+    def diff(self, other: FactMsg) -> dict | None:
         """
         Compare this Event with a FileActivity protobuf message.
 
@@ -292,15 +293,19 @@ class Event:
             None if identical, dict of differences if not matching
         """
         diff = {}
+        event = getattr(other, other.WhichOneof('msg'))
+
+        if not isinstance(event, FileActivity):
+            raise NotImplementedError
 
         # Check process differences first
-        process_diff = self.process.diff(other.process)
+        process_diff = self.process.diff(event.process)
         if process_diff is not None:
             diff['process'] = process_diff
 
         # Check event type
         event_type_expected = self.event_type.name.lower()
-        event_type_actual = other.WhichOneof('file')
+        event_type_actual = event.WhichOneof('file')
 
         Event._diff_field(diff, 'event_type',
                           event_type_expected, event_type_actual)
@@ -308,7 +313,7 @@ class Event:
             return diff
 
         # Get the appropriate event field based on type
-        event_field = getattr(other, event_type_expected)
+        event_field = getattr(event, event_type_expected)
 
         # Rename handling is a bit different to the rest, since it has
         # new and old paths.
