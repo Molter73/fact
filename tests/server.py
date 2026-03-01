@@ -1,5 +1,6 @@
 from concurrent import futures
 from collections import deque
+import json
 from threading import Event
 from time import sleep
 
@@ -88,12 +89,15 @@ class FileActivityService(fact_iservice_pb2_grpc.FileActivityServiceServicer):
                 continue
 
             print(f'Got event: {msg}')
-            if msg in events:
-                events.remove(msg)
+
+            # Check if msg matches the next expected event
+            diff = events[0].diff(msg)
+            if diff is None:
+                events.pop(0)
                 if len(events) == 0:
-                    break
+                    return
             elif strict:
-                raise ValueError(f'Encountered unexpected event: {msg}')
+                raise ValueError(json.dumps(diff, indent=4))
 
     def wait_events(self, events: list[Event], strict: bool = True):
         """

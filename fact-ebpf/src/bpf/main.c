@@ -52,7 +52,7 @@ int BPF_PROG(trace_file_open, struct file* file) {
     goto ignored;
   }
 
-  struct bound_path_t* path = path_read(&file->f_path);
+  struct bound_path_t* path = path_read_unchecked(&file->f_path);
   if (path == NULL) {
     bpf_printk("Failed to read path");
     m->file_open.error++;
@@ -71,7 +71,7 @@ int BPF_PROG(trace_file_open, struct file* file) {
       break;
   }
 
-  submit_event(&m->file_open, event_type, path->path, &inode_key, true);
+  submit_open_event(&m->file_open, event_type, path->path, &inode_key);
 
   return 0;
 
@@ -89,28 +89,11 @@ int BPF_PROG(trace_path_unlink, struct path* dir, struct dentry* dentry) {
 
   m->path_unlink.total++;
 
-  struct bound_path_t* path = NULL;
-  if (path_hooks_support_bpf_d_path) {
-    path = path_read(dir);
-  } else {
-    path = path_read_no_d_path(dir);
-  }
-
+  struct bound_path_t* path = path_read_append_d_entry(dir, dentry);
   if (path == NULL) {
     bpf_printk("Failed to read path");
-    goto error;
-  }
-  path_write_char(path->path, path->len - 1, '/');
-
-  switch (path_append_dentry(path, dentry)) {
-    case PATH_APPEND_SUCCESS:
-      break;
-    case PATH_APPEND_INVALID_LENGTH:
-      bpf_printk("Invalid path length: %u", path->len);
-      goto error;
-    case PATH_APPEND_READ_ERROR:
-      bpf_printk("Failed to read final path component");
-      goto error;
+    m->path_unlink.error++;
+    return 0;
   }
 
   inode_key_t inode_key = inode_to_key(dentry->d_inode);
@@ -129,15 +112,9 @@ int BPF_PROG(trace_path_unlink, struct path* dir, struct dentry* dentry) {
       break;
   }
 
-  submit_event(&m->path_unlink,
-               FILE_ACTIVITY_UNLINK,
-               path->path,
-               &inode_key,
-               path_hooks_support_bpf_d_path);
-  return 0;
-
-error:
-  m->path_unlink.error++;
+  submit_unlink_event(&m->path_unlink,
+                      path->path,
+                      &inode_key);
   return 0;
 }
 
@@ -150,13 +127,7 @@ int BPF_PROG(trace_path_chmod, struct path* path, umode_t mode) {
 
   m->path_chmod.total++;
 
-  struct bound_path_t* bound_path = NULL;
-  if (path_hooks_support_bpf_d_path) {
-    bound_path = path_read(path);
-  } else {
-    bound_path = path_read_no_d_path(path);
-  }
-
+  struct bound_path_t* bound_path = path_read(path);
   if (bound_path == NULL) {
     bpf_printk("Failed to read path");
     m->path_chmod.error++;
@@ -183,8 +154,7 @@ int BPF_PROG(trace_path_chmod, struct path* path, umode_t mode) {
                     bound_path->path,
                     &inode_key,
                     mode,
-                    old_mode,
-                    path_hooks_support_bpf_d_path);
+                    old_mode);
 
   return 0;
 }
@@ -201,13 +171,7 @@ int BPF_PROG(trace_path_chown, struct path* path, unsigned long long uid, unsign
 
   m->path_chown.total++;
 
-  struct bound_path_t* bound_path = NULL;
-  if (path_hooks_support_bpf_d_path) {
-    bound_path = path_read(path);
-  } else {
-    bound_path = path_read_no_d_path(path);
-  }
-
+  struct bound_path_t* bound_path = path_read(path);
   if (bound_path == NULL) {
     bpf_printk("Failed to read path");
     m->path_chown.error++;
@@ -239,8 +203,55 @@ int BPF_PROG(trace_path_chown, struct path* path, unsigned long long uid, unsign
                          uid,
                          gid,
                          old_uid,
-                         old_gid,
-                         path_hooks_support_bpf_d_path);
+                         old_gid);
 
+  return 0;
+}
+
+SEC("lsm/path_rename")
+int BPF_PROG(trace_path_rename, struct path* old_dir,
+             struct dentry* old_dentry, struct path* new_dir,
+             struct dentry* new_dentry, unsigned int flags) {
+  struct metrics_t* m = get_metrics();
+  if (m == NULL) {
+    return 0;
+  }
+
+  m->path_rename.total++;
+
+  struct bound_path_t* new_path = path_read_append_d_entry(new_dir, new_dentry);
+  if (new_path == NULL) {
+    bpf_printk("Failed to read path");
+    goto error;
+  }
+
+  struct bound_path_t* old_path = path_read_alt_append_d_entry(old_dir, old_dentry);
+  if (old_path == NULL) {
+    bpf_printk("Failed to read path");
+    goto error;
+  }
+
+  inode_key_t old_inode = inode_to_key(old_dentry->d_inode);
+  const inode_value_t* volatile old_inode_value = inode_get(&old_inode);
+  inode_key_t new_inode = inode_to_key(new_dentry->d_inode);
+  const inode_value_t* volatile new_inode_value = inode_get(&new_inode);
+
+  if (inode_is_monitored(old_inode_value) == NOT_MONITORED &&
+      inode_is_monitored(new_inode_value) == NOT_MONITORED &&
+      !is_monitored(old_path) &&
+      !is_monitored(new_path)) {
+    m->path_rename.ignored++;
+    return 0;
+  }
+
+  submit_rename_event(&m->path_rename,
+                      new_path->path,
+                      old_path->path,
+                      &old_inode,
+                      &new_inode);
+  return 0;
+
+error:
+  m->path_rename.error++;
   return 0;
 }

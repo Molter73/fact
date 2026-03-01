@@ -5,13 +5,13 @@ from test_editors.commons import get_vi_test_file
 
 def test_new_file(editor_container, server):
     fut = '/mounted/test.txt'
+    cmd = f"nvim {fut} '+:normal iThis is a test<CR>' -c x"
 
-    editor_container.exec_run(
-        f"nvim {fut} +':normal iThis is a test<CR>' -c x")
+    editor_container.exec_run(cmd)
 
     process = Process.in_container(
         exe_path='/usr/bin/nvim',
-        args=f'nvim {fut} +:normal iThis is a test<CR> -c x',
+        args=cmd,
         name='nvim',
         container_id=editor_container.id[:12],
     )
@@ -25,12 +25,13 @@ def test_new_file(editor_container, server):
 
 def test_open_file(editor_container, server):
     fut = '/mounted/test.txt'
+    fut_backup = f'{fut}~'
+    cmd = f"nvim {fut} '+:normal iThis is a test<CR>' -c x"
     container_id = editor_container.id[:12]
 
     # We ensure the file exists before editing.
     editor_container.exec_run(f'touch {fut}')
-    editor_container.exec_run(
-        f"nvim {fut} +':normal iThis is a test<CR>' -c x")
+    editor_container.exec_run(cmd)
 
     touch = Process.in_container(
         exe_path='/usr/bin/touch',
@@ -40,7 +41,7 @@ def test_open_file(editor_container, server):
     )
     nvim = Process.in_container(
         exe_path='/usr/bin/nvim',
-        args=f'nvim {fut} +:normal iThis is a test<CR> -c x',
+        args=cmd,
         name='nvim',
         container_id=container_id,
     )
@@ -56,12 +57,14 @@ def test_open_file(editor_container, server):
               file=vi_test_file, host_path='', owner_uid=0, owner_gid=0),
         Event(process=nvim, event_type=EventType.UNLINK,
               file=vi_test_file, host_path=''),
+        Event(process=nvim, event_type=EventType.RENAME,
+              file=fut_backup, host_path='', old_file=fut, old_host_path=''),
         Event(process=nvim, event_type=EventType.CREATION,
               file=fut, host_path=''),
         Event(process=nvim, event_type=EventType.PERMISSION,
               file=fut, host_path='', mode=0o100644),
         Event(process=nvim, event_type=EventType.UNLINK,
-              file=f'{fut}~', host_path=''),
+              file=fut_backup, host_path=''),
     ]
 
     server.wait_events(events, strict=True)
@@ -69,13 +72,13 @@ def test_open_file(editor_container, server):
 
 def test_new_file_ovfs(editor_container, server):
     fut = '/container-dir/test.txt'
+    cmd = f"nvim {fut} '+:normal iThis is a test<CR>' -c x"
 
-    editor_container.exec_run(
-        f"nvim {fut} +':normal iThis is a test<CR>' -c x")
+    editor_container.exec_run(cmd)
 
     process = Process.in_container(
         exe_path='/usr/bin/nvim',
-        args=f'nvim {fut} +:normal iThis is a test<CR> -c x',
+        args=cmd,
         name='nvim',
         container_id=editor_container.id[:12],
     )
@@ -91,12 +94,13 @@ def test_new_file_ovfs(editor_container, server):
 
 def test_open_file_ovfs(editor_container, server):
     fut = '/container-dir/test.txt'
+    fut_backup = f'{fut}~'
+    cmd = f"nvim {fut} '+:normal iThis is a test<CR>' -c x"
     container_id = editor_container.id[:12]
 
     # We ensure the file exists before editing.
     editor_container.exec_run(f'touch {fut}')
-    editor_container.exec_run(
-        f"nvim {fut} +':normal iThis is a test<CR>' -c x")
+    editor_container.exec_run(cmd)
 
     touch = Process.in_container(
         exe_path='/usr/bin/touch',
@@ -106,7 +110,7 @@ def test_open_file_ovfs(editor_container, server):
     )
     nvim = Process.in_container(
         exe_path='/usr/bin/nvim',
-        args=f'nvim {fut} +:normal iThis is a test<CR> -c x',
+        args=cmd,
         name='nvim',
         container_id=container_id,
     )
@@ -126,6 +130,8 @@ def test_open_file_ovfs(editor_container, server):
               file=vi_test_file, host_path='', owner_uid=0, owner_gid=0),
         Event(process=nvim, event_type=EventType.UNLINK,
               file=vi_test_file, host_path=''),
+        Event(process=nvim, event_type=EventType.RENAME,
+              file=fut_backup, host_path='', old_file=fut, old_host_path=''),
         Event(process=nvim, event_type=EventType.CREATION,
               file=fut, host_path=''),
         Event(process=nvim, event_type=EventType.OPEN,
@@ -133,7 +139,7 @@ def test_open_file_ovfs(editor_container, server):
         Event(process=nvim, event_type=EventType.PERMISSION,
               file=fut, host_path='', mode=0o100644),
         Event(process=nvim, event_type=EventType.UNLINK,
-              file=f'{fut}~', host_path=''),
+              file=fut_backup, host_path=''),
     ]
 
     server.wait_events(events, strict=True)

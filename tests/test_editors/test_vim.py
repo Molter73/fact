@@ -7,12 +7,13 @@ def test_new_file(editor_container, server):
     swap_file = '/mounted/.test.txt.swp'
     swx_file = '/mounted/.test.txt.swx'
 
-    editor_container.exec_run(
-        f"vim {fut} +':normal iThis is a test<CR>' -c x")
+    cmd = f"vim {fut} '+:normal iThis is a test<CR>' -c x"
+
+    editor_container.exec_run(cmd)
 
     process = Process.in_container(
         exe_path='/usr/bin/vim',
-        args=f'vim {fut} +:normal iThis is a test<CR> -c x',
+        args=cmd,
         name='vim',
         container_id=editor_container.id[:12],
     )
@@ -41,12 +42,13 @@ def test_new_file_ovfs(editor_container, server):
     swap_file = '/container-dir/.test.txt.swp'
     swx_file = '/container-dir/.test.txt.swx'
 
-    editor_container.exec_run(
-        f"vim {fut} +':normal iThis is a test<CR>' -c x")
+    cmd = f"vim {fut} '+:normal iThis is a test<CR>' -c x"
+
+    editor_container.exec_run(cmd)
 
     process = Process.in_container(
         exe_path='/usr/bin/vim',
-        args=f'vim {fut} +:normal iThis is a test<CR> -c x',
+        args=cmd,
         name='vim',
         container_id=editor_container.id[:12],
     )
@@ -80,15 +82,17 @@ def test_new_file_ovfs(editor_container, server):
 
 def test_open_file(editor_container, server):
     fut = '/mounted/test.txt'
+    fut_backup = f'{fut}~'
     swap_file = '/mounted/.test.txt.swp'
     swx_file = '/mounted/.test.txt.swx'
     vi_test_file = get_vi_test_file('/mounted')
     container_id = editor_container.id[:12]
 
+    cmd = f"vim {fut} '+:normal iThis is a test<CR>' -c x"
+
     # We ensure the file exists before editing.
     editor_container.exec_run(f'touch {fut}')
-    editor_container.exec_run(
-        f"vim {fut} +':normal iThis is a test<CR>' -c x")
+    editor_container.exec_run(cmd)
 
     touch_process = Process.in_container(
         exe_path='/usr/bin/touch',
@@ -98,7 +102,7 @@ def test_open_file(editor_container, server):
     )
     vi_process = Process.in_container(
         exe_path='/usr/bin/vim',
-        args=f'vim {fut} +:normal iThis is a test<CR> -c x',
+        args=cmd,
         name='vim',
         container_id=container_id,
     )
@@ -124,12 +128,14 @@ def test_open_file(editor_container, server):
               file=vi_test_file, host_path='', owner_uid=0, owner_gid=0),
         Event(process=vi_process, event_type=EventType.UNLINK,
               file=vi_test_file, host_path=''),
+        Event(process=vi_process, event_type=EventType.RENAME,
+              file=fut_backup, host_path='', old_file=fut, old_host_path=''),
         Event(process=vi_process, event_type=EventType.CREATION,
               file=fut, host_path=''),
         Event(process=vi_process, event_type=EventType.PERMISSION,
               file=fut, host_path='', mode=0o100644),
         Event(process=vi_process, event_type=EventType.UNLINK,
-              file=f'{fut}~', host_path=''),
+              file=fut_backup, host_path=''),
         Event(process=vi_process, event_type=EventType.UNLINK,
               file=swap_file, host_path=''),
     ]
@@ -139,15 +145,17 @@ def test_open_file(editor_container, server):
 
 def test_open_file_ovfs(editor_container, server):
     fut = '/container-dir/test.txt'
+    fut_backup = f'{fut}~'
     swap_file = '/container-dir/.test.txt.swp'
     swx_file = '/container-dir/.test.txt.swx'
     vi_test_file = get_vi_test_file('/container-dir')
     container_id = editor_container.id[:12]
 
+    cmd = f"vim {fut} '+:normal iThis is a test<CR>' -c x"
+
     # We ensure the file exists before editing.
     editor_container.exec_run(f'touch {fut}')
-    editor_container.exec_run(
-        f"vim {fut} +':normal iThis is a test<CR>' -c x")
+    editor_container.exec_run(cmd)
 
     touch_process = Process.in_container(
         exe_path='/usr/bin/touch',
@@ -157,7 +165,7 @@ def test_open_file_ovfs(editor_container, server):
     )
     vi_process = Process.in_container(
         exe_path='/usr/bin/vim',
-        args=f'vim {fut} +:normal iThis is a test<CR> -c x',
+        args=cmd,
         name='vim',
         container_id=container_id,
     )
@@ -193,6 +201,8 @@ def test_open_file_ovfs(editor_container, server):
               file=vi_test_file, host_path='', owner_uid=0, owner_gid=0),
         Event(process=vi_process, event_type=EventType.UNLINK,
               file=vi_test_file, host_path=''),
+        Event(process=vi_process, event_type=EventType.RENAME,
+              file=fut_backup, host_path='', old_file=fut, old_host_path=''),
         Event(process=vi_process, event_type=EventType.CREATION,
               file=fut, host_path=''),
         Event(process=vi_process, event_type=EventType.OPEN,
@@ -200,7 +210,7 @@ def test_open_file_ovfs(editor_container, server):
         Event(process=vi_process, event_type=EventType.PERMISSION,
               file=fut, host_path='', mode=0o100644),
         Event(process=vi_process, event_type=EventType.UNLINK,
-              file=f'{fut}~', host_path=''),
+              file=fut_backup, host_path=''),
         Event(process=vi_process, event_type=EventType.UNLINK,
               file=swap_file, host_path=''),
     ]
