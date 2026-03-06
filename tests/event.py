@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any, override
 
 from fact_api.fact_iservice_pb2 import FactMsg
-from fact_api.process_pb2 import Process as FactApiProcess
+from fact_api.process_pb2 import Process as FactApiProcess, ProcessActivity
 from fact_api.file_pb2 import FileActivity
 
 import utils

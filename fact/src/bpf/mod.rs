@@ -163,6 +163,12 @@ impl Bpf {
                     };
                     prog.load(name, btf)?
                 }
+                Program::BtfTracePoint(prog) => {
+                    let Some(hook) = name.strip_prefix("trace_") else {
+                        bail!("Invalid hook name: {name}");
+                    };
+                    prog.load(hook, btf)?
+                }
                 u => unimplemented!("{u:?}"),
             }
         }
@@ -178,6 +184,9 @@ impl Bpf {
                 Program::Iter(_) => {
                     // Iterators need to be attached when attempting to
                     // read from them, we ignore them here.
+                }
+                Program::BtfTracePoint(prog) => {
+                    prog.attach()?;
                 }
                 u => unimplemented!("{u:?}"),
             };

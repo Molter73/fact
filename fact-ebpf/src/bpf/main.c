@@ -5,8 +5,8 @@
 #include "types.h"
 #include "inode.h"
 #include "maps.h"
-#include "events.h"
 #include "bound_path.h"
+#include "events.h"
 #include "upid.h"
 
 #include <bpf/bpf_helpers.h>
@@ -253,5 +253,18 @@ int BPF_PROG(trace_path_rename, struct path* old_dir,
 
 error:
   m->path_rename.error++;
+  return 0;
+}
+
+SEC("tp_btf/sched_process_fork")
+int BPF_PROG(trace_sched_process_fork, struct task_struct* parent, struct task_struct* child) {
+  struct metrics_t* m = get_metrics();
+  if (m == NULL) {
+    return 0;
+  }
+
+  m->sched_fork.total++;
+
+  submit_fork_event(&m->sched_fork, parent, child);
   return 0;
 }

@@ -2,7 +2,6 @@ syntax = "proto3";
 
 package fact_api;
 
-import "google/protobuf/timestamp.proto";
 import "fact-api/process.proto";
 
 option cc_enable_arenas = true;
@@ -47,7 +46,6 @@ message FileOpen {
 }
 
 message FileActivity {
-  google.protobuf.Timestamp timestamp = 1;
   Process process = 2;
   oneof file {
     FileCreation creation = 3;
@@ -58,6 +56,4 @@ message FileActivity {
     FileOpen open = 8;
     FileWrite write = 9;
   }
-  // The hostname/name of the node where the file activity occurred
-  string hostname = 10;
 }

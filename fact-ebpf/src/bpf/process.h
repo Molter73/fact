@@ -78,8 +78,7 @@ __always_inline static const char* get_memory_cgroup(struct helper_t* helper) {
   return helper->buf;
 }
 
-__always_inline static void process_fill_lineage(process_t* p, struct helper_t* helper, bool use_bpf_d_path) {
-  struct task_struct* task = (struct task_struct*)bpf_get_current_task_btf();
+__always_inline static void process_fill_lineage(process_t* p, const struct task_struct* task, struct helper_t* helper, bool use_bpf_d_path) {
   p->lineage_len = 0;
 
   for (int i = 0; i < LINEAGE_MAX; i++) {
@@ -97,13 +96,11 @@ __always_inline static void process_fill_lineage(process_t* p, struct helper_t* 
   }
 }
 
-__always_inline static unsigned long get_mount_ns() {
-  struct task_struct* task = (struct task_struct*)bpf_get_current_task_btf();
+__always_inline static unsigned long get_mount_ns(const struct task_struct* task) {
   return task->nsproxy->mnt_ns->ns.inum;
 }
 
-__always_inline static int64_t process_fill(process_t* p, bool use_bpf_d_path) {
-  struct task_struct* task = (struct task_struct*)bpf_get_current_task_btf();
+__always_inline static int64_t process_fill(process_t* p, const struct task_struct* task, bool use_bpf_d_path) {
   uint32_t key = 0;
   uint64_t uid_gid = bpf_get_current_uid_gid();
   p->uid = uid_gid & 0xFFFFFFFF;
@@ -140,9 +137,9 @@ __always_inline static int64_t process_fill(process_t* p, bool use_bpf_d_path) {
     bpf_probe_read_str(p->memory_cgroup, PATH_MAX, cg);
   }
 
-  p->in_root_mount_ns = get_mount_ns() == host_mount_ns;
+  p->in_root_mount_ns = get_mount_ns(task) == host_mount_ns;
 
-  process_fill_lineage(p, helper, use_bpf_d_path);
+  process_fill_lineage(p, task, helper, use_bpf_d_path);
 
   return 0;
 }

@@ -71,8 +71,7 @@ pub(crate) enum EventTestData {
 pub struct Event {
     timestamp: u64,
     hostname: &'static str,
-    process: Process,
-    file: FileData,
+    data: EventData,
 }
 
 impl Event {
@@ -116,11 +115,12 @@ impl Event {
             }
         };
 
+        let data = EventData::File { process, file };
+
         Ok(Event {
             timestamp,
             hostname,
-            process,
-            file,
+            data,
         })
     }
 
@@ -129,14 +129,33 @@ impl Event {
     ///
     /// In the case of operations that involve two inodes, like rename,
     /// the 'new' inode will be returned.
-    pub fn get_inode(&self) -> &inode_key_t {
-        match &self.file {
-            FileData::Open(data) => &data.inode,
-            FileData::Creation(data) => &data.inode,
-            FileData::Unlink(data) => &data.inode,
-            FileData::Chmod(data) => &data.inner.inode,
-            FileData::Chown(data) => &data.inner.inode,
-            FileData::Rename(data) => &data.new.inode,
+    pub fn get_inode(&self) -> Option<&inode_key_t> {
+        match &self.data {
+            EventData::File {
+                file: FileData::Open(data),
+                ..
+            } => Some(&data.inode),
+            EventData::File {
+                file: FileData::Creation(data),
+                ..
+            } => Some(&data.inode),
+            EventData::File {
+                file: FileData::Unlink(data),
+                ..
+            } => Some(&data.inode),
+            EventData::File {
+                file: FileData::Chmod(data),
+                ..
+            } => Some(&data.inner.inode),
+            EventData::File {
+                file: FileData::Chown(data),
+                ..
+            } => Some(&data.inner.inode),
+            EventData::File {
+                file: FileData::Rename(data),
+                ..
+            } => Some(&data.new.inode),
+            EventData::Process(_) => None,
         }
     }
 
@@ -144,8 +163,11 @@ impl Event {
     /// like rename. For operations that involve a single inode, `None`
     /// will be returned.
     pub fn get_old_inode(&self) -> Option<&inode_key_t> {
-        match &self.file {
-            FileData::Rename(data) => Some(&data.old.inode),
+        match &self.data {
+            EventData::File {
+                file: FileData::Rename(data),
+                ..
+            } => Some(&data.old.inode),
             _ => None,
         }
     }
@@ -155,20 +177,43 @@ impl Event {
     /// In the case of operations that involve two paths, like rename,
     /// the 'new' host_file will be set.
     pub fn set_host_path(&mut self, host_path: PathBuf) {
-        match &mut self.file {
-            FileData::Open(data) => data.host_file = host_path,
-            FileData::Creation(data) => data.host_file = host_path,
-            FileData::Unlink(data) => data.host_file = host_path,
-            FileData::Chmod(data) => data.inner.host_file = host_path,
-            FileData::Chown(data) => data.inner.host_file = host_path,
-            FileData::Rename(data) => data.new.host_file = host_path,
+        match &mut self.data {
+            EventData::File {
+                file: FileData::Open(data),
+                ..
+            } => data.host_file = host_path,
+            EventData::File {
+                file: FileData::Creation(data),
+                ..
+            } => data.host_file = host_path,
+            EventData::File {
+                file: FileData::Unlink(data),
+                ..
+            } => data.host_file = host_path,
+            EventData::File {
+                file: FileData::Chmod(data),
+                ..
+            } => data.inner.host_file = host_path,
+            EventData::File {
+                file: FileData::Chown(data),
+                ..
+            } => data.inner.host_file = host_path,
+            EventData::File {
+                file: FileData::Rename(data),
+                ..
+            } => data.new.host_file = host_path,
+            EventData::Process(_) => {}
         }
     }
 
     /// Same as `set_host_path` but setting the 'old' host_file for
     /// operations that have one, like rename.
     pub fn set_old_host_path(&mut self, host_path: PathBuf) {
-        if let FileData::Rename(data) = &mut self.file {
+        if let EventData::File {
+            file: FileData::Rename(data),
+            ..
+        } = &mut self.data
+        {
             data.old.host_file = host_path
         }
     }
@@ -178,45 +223,108 @@ impl TryFrom<&event_t> for Event {
     type Error = anyhow::Error;
 
     fn try_from(value: &event_t) -> Result<Self, Self::Error> {
-        let process = Process::try_from(value.process)?;
         let timestamp = host_info::get_boot_time() + value.timestamp;
-        let file = FileData::new(
-            value.type_,
-            value.filename,
-            value.inode,
-            value.__bindgen_anon_1,
-        )?;
+        let data = EventData::try_from(value)?;
 
         Ok(Event {
             timestamp,
             hostname: host_info::get_hostname(),
-            process,
-            file,
+            data,
         })
     }
 }
 
 impl From<Event> for fact_api::FactMsg {
     fn from(value: Event) -> Self {
-        let file = fact_api::file_activity::File::from(value.file);
         let timestamp = timestamp_to_proto(value.timestamp);
-        let process = fact_api::Process::from(value.process);
-        let activity = fact_api::FileActivity {
-            file: Some(file),
-            timestamp: Some(timestamp),
-            process: Some(process),
-            hostname: value.hostname.to_string(),
+        let msg = match value.data {
+            EventData::File { file, process } => {
+                let activity = fact_api::FileActivity {
+                    file: Some(file.into()),
+                    process: Some(process.into()),
+                };
+                Some(fact_api::fact_msg::Msg::File(activity))
+            }
+            EventData::Process(data) => {
+                let activity = fact_api::ProcessActivity {
+                    process: Some(data.into()),
+                };
+                Some(fact_api::fact_msg::Msg::Process(activity))
+            }
         };
-        let msg = Some(fact_api::fact_msg::Msg::File(activity));
 
-        Self { msg }
+        Self {
+            timestamp: Some(timestamp),
+            hostname: value.hostname.to_string(),
+            msg,
+        }
     }
 }
 
 #[cfg(test)]
 impl PartialEq for Event {
     fn eq(&self, other: &Self) -> bool {
-        self.hostname == other.hostname && self.process == other.process && self.file == other.file
+        self.hostname == other.hostname && self.data == other.data
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum EventData {
+    File { process: Process, file: FileData },
+    Process(ProcessData),
+}
+
+#[cfg(test)]
+impl PartialEq for EventData {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::File {
+                    process: l_process,
+                    file: l_file,
+                },
+                Self::File {
+                    process: r_process,
+                    file: r_file,
+                },
+            ) => l_process == r_process && l_file == r_file,
+            (Self::Process(left), Self::Process(right)) => left == right,
+            _ => false,
+        }
+    }
+}
+
+impl TryFrom<&event_t> for EventData {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &event_t) -> Result<Self, Self::Error> {
+        let process = Process::try_from(value.process)?;
+        let data = match value.type_ {
+            file_activity_type_t::FILE_ACTIVITY_OPEN
+            | file_activity_type_t::FILE_ACTIVITY_CREATION
+            | file_activity_type_t::FILE_ACTIVITY_UNLINK
+            | file_activity_type_t::FILE_ACTIVITY_CHMOD
+            | file_activity_type_t::FILE_ACTIVITY_CHOWN
+            | file_activity_type_t::FILE_ACTIVITY_RENAME => EventData::File {
+                file: FileData::new(
+                    value.type_,
+                    value.filename,
+                    value.inode,
+                    value.__bindgen_anon_1,
+                )?,
+                process,
+            },
+            file_activity_type_t::PROCESS_FORK => {
+                let parent = Process::try_from(value.process)?;
+                let child = unsafe { value.__bindgen_anon_1.fork.child };
+                let child = Process::try_from(child)?;
+                let data = ProcessForkData { parent, child };
+                EventData::Process(ProcessData::Fork(data))
+            }
+            _ => unreachable!(),
+        };
+
+        Ok(data)
     }
 }
 
@@ -437,6 +545,50 @@ impl From<RenameFileData> for fact_api::FileRename {
 impl PartialEq for RenameFileData {
     fn eq(&self, other: &Self) -> bool {
         self.new == other.new && self.old == other.old
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum ProcessData {
+    Fork(ProcessForkData),
+}
+
+#[cfg(test)]
+impl PartialEq for ProcessData {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Fork(left), Self::Fork(right)) => left == right,
+        }
+    }
+}
+
+impl From<ProcessData> for fact_api::process_activity::Process {
+    fn from(value: ProcessData) -> Self {
+        match value {
+            ProcessData::Fork(data) => fact_api::process_activity::Process::Fork(data.into()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProcessForkData {
+    parent: Process,
+    child: Process,
+}
+
+#[cfg(test)]
+impl PartialEq for ProcessForkData {
+    fn eq(&self, other: &Self) -> bool {
+        self.parent == other.parent && self.child == other.child
+    }
+}
+
+impl From<ProcessForkData> for fact_api::ProcessFork {
+    fn from(ProcessForkData { parent, child }: ProcessForkData) -> Self {
+        fact_api::ProcessFork {
+            parent: Some(parent.into()),
+            child: Some(child.into()),
+        }
     }
 }
 
