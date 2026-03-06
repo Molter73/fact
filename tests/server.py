@@ -12,6 +12,7 @@ from time import sleep
 from typing import TYPE_CHECKING, Any
 
 import grpc
+from fact_api import fact_iservice_pb2_grpc
 from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import (
     ExportLogsServiceRequest,
     ExportLogsServiceResponse,
@@ -31,9 +32,6 @@ from event import (
     EventType,
     Process,
 )
-from fact_api import fact_iservice_pb2_grpc
-from fact_api.sensor.sfa_pb2 import FileActivity
-from fact_api.process_pb2 import ProcessActivity
 
 if TYPE_CHECKING:
     from opentelemetry.proto.common.v1.common_pb2 import AnyValue, KeyValue
@@ -188,7 +186,7 @@ class EventServer(ABC):
 
 
 class GrpcServer(
-    EventServer, sfa_iservice_pb2_grpc.FileActivityServiceServicer
+    EventServer, fact_iservice_pb2_grpc.FileActivityServiceServicer
 ):
     """gRPC server for the File Activity Service."""
 
@@ -268,13 +266,17 @@ class GrpcServer(
         appends it to the queue.
         """
         for req in request_iterator:
-            event = self._translate(req)
+            print(req)
+            msg = req.WhichOneof('msg')
+            if msg != 'file':
+                continue
+            event = self._translate(getattr(req, msg))
             if event is not None:
                 self.queue.append(event)
 
     def serve(self, addr: str = '0.0.0.0:9999'):
         """Start the gRPC server on the given address."""
-        sfa_iservice_pb2_grpc.add_FileActivityServiceServicer_to_server(
+        fact_iservice_pb2_grpc.add_FileActivityServiceServicer_to_server(
             self,
             self.server,
         )

@@ -8,7 +8,7 @@ use tokio::{
     time::interval,
 };
 
-use crate::config::{OTelConfig, PathsConfig};
+use crate::config::{OTelConfig, PathsConfig, ProcessConfig};
 
 use super::{CONFIG_FILES, EndpointConfig, FactConfig, GrpcConfig};
 
@@ -22,6 +22,7 @@ pub struct Reloader {
     files: HashMap<&'static str, (i64, i64)>,
     scan_interval: watch::Sender<Duration>,
     rate_limit: watch::Sender<u64>,
+    process: watch::Sender<ProcessConfig>,
     trigger: Arc<Notify>,
 }
 
@@ -94,6 +95,12 @@ impl Reloader {
     /// is changed.
     pub fn rate_limit(&self) -> watch::Receiver<u64> {
         self.rate_limit.subscribe()
+    }
+
+    /// Subscribe to get notifications when process configuration is
+    /// changed.
+    pub fn process(&self) -> watch::Receiver<ProcessConfig> {
+        self.process.subscribe()
     }
 
     /// Get a reference to the internal trigger for manual reloading of
@@ -220,6 +227,16 @@ impl Reloader {
                 false
             }
         });
+
+        self.process.send_if_modified(|old| {
+            if *old != new.process {
+                debug!("Sending new process configuration...");
+                *old = new.process.clone();
+                true
+            } else {
+                false
+            }
+        });
     }
 
     /// Recreate the configuration and notify of changes to any
@@ -276,6 +293,7 @@ impl From<FactConfig> for Reloader {
             grpc,
             otel,
             paths,
+            process,
             ..
         } = config;
 
@@ -283,6 +301,7 @@ impl From<FactConfig> for Reloader {
         let (grpc, _) = watch::channel(grpc);
         let (otel, _) = watch::channel(otel);
         let (paths, _) = watch::channel(paths);
+        let (process, _) = watch::channel(process);
         let trigger = Arc::new(Notify::new());
 
         Reloader {
@@ -295,6 +314,7 @@ impl From<FactConfig> for Reloader {
             rate_limit,
             files,
             trigger,
+            process,
         }
     }
 }

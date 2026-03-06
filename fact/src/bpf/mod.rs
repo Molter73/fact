@@ -17,7 +17,7 @@ use tokio::{
 };
 
 use crate::{
-    config::{BpfConfig, PathsConfig},
+    config::{BpfConfig, PathsConfig, ProcessConfig},
     event::Event,
     host_info,
     metrics::EventCounter,
@@ -37,6 +37,7 @@ pub struct Bpf {
 
     paths_config: watch::Receiver<PathsConfig>,
     paths_lpm_map: LpmTrie<MapData, [c_char; LPM_SIZE_MAX as usize], c_char>,
+    process_config: watch::Receiver<ProcessConfig>,
 
     links: Vec<LsmLink>,
 
@@ -47,6 +48,7 @@ pub struct Bpf {
 impl Bpf {
     pub fn new(
         paths_config: watch::Receiver<PathsConfig>,
+        process_config: watch::Receiver<ProcessConfig>,
         bpf_config: &BpfConfig,
         running: watch::Receiver<bool>,
         metrics: EventCounter,
@@ -69,6 +71,7 @@ impl Bpf {
             checks,
             tx,
             paths_config,
+            process_config,
             paths_lpm_map,
             links: Vec::new(),
             running,
@@ -253,7 +256,10 @@ impl Bpf {
     }
 
     /// Attaches the supplied BPF program if it is loaded into the kernel.
-    fn attach_prog(prog: &mut Program) -> Result<Option<LsmLink>, BpfAttachError> {
+    fn attach_prog(
+        prog: &mut Program,
+        attach_tracepoints: bool,
+    ) -> Result<Option<LsmLink>, BpfAttachError> {
         match prog {
             Program::Lsm(prog) if prog.fd().is_ok() => {
                 let link_id = prog.attach()?;
@@ -266,7 +272,9 @@ impl Bpf {
                 Ok(None)
             }
             Program::BtfTracePoint(prog) => {
-                prog.attach()?;
+                if attach_tracepoints {
+                    prog.attach()?;
+                }
                 Ok(None)
             }
             u => unimplemented!("{u:?}"),
@@ -279,6 +287,7 @@ impl Bpf {
     /// If any attach fails, programs that were already attached during
     /// this call are dropped.
     fn attach_progs(&mut self) -> anyhow::Result<()> {
+        let attach_tracepoints = self.process_config.borrow().enabled();
         self.links = self
             .obj
             .programs_mut()
@@ -286,11 +295,13 @@ impl Bpf {
                 Program::Lsm(_) => true, // only loading LSM hooks
                 _ => false,
             })
-            .filter_map(|(_, prog)| match Bpf::attach_prog(prog) {
-                Ok(link) => Some(Ok(link?)),
-                Err(BpfAttachError::NotLoaded) => None,
-                Err(e) => Some(Err(e)),
-            })
+            .filter_map(
+                |(_, prog)| match Bpf::attach_prog(prog, attach_tracepoints) {
+                    Ok(link) => Some(Ok(link?)),
+                    Err(BpfAttachError::NotLoaded) => None,
+                    Err(e) => Some(Err(e)),
+                },
+            )
             .collect::<Result<Vec<_>, BpfAttachError>>()?;
 
         Ok(())
@@ -452,6 +463,7 @@ mod bpf_tests {
         let (run_tx, run_rx) = watch::channel(true);
         let (bpf, mut rx) = Bpf::new(
             reloader.paths(),
+            reloader.process(),
             &bpf_config,
             run_rx,
             metrics.bpf_worker.clone(),

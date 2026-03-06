@@ -545,10 +545,20 @@ impl TryFrom<&event_t> for EventData {
         let data = match value.type_ {
             file_activity_type_t::FILE_ACTIVITY_OPEN
             | file_activity_type_t::FILE_ACTIVITY_CREATION
+            | file_activity_type_t::FILE_ACTIVITY_LINK
             | file_activity_type_t::FILE_ACTIVITY_UNLINK
             | file_activity_type_t::FILE_ACTIVITY_CHMOD
             | file_activity_type_t::FILE_ACTIVITY_CHOWN
-            | file_activity_type_t::FILE_ACTIVITY_RENAME => EventData::File {
+            | file_activity_type_t::FILE_ACTIVITY_RENAME
+            | file_activity_type_t::DIR_ACTIVITY_CREATION
+            | file_activity_type_t::DIR_ACTIVITY_UNLINK
+            | file_activity_type_t::FILE_ACTIVITY_SETXATTR
+            | file_activity_type_t::FILE_ACTIVITY_REMOVEXATTR
+            | file_activity_type_t::FILE_ACTIVITY_ACL_SET
+            | file_activity_type_t::FILE_ACTIVITY_MOUNT
+            | file_activity_type_t::FILE_ACTIVITY_UMOUNT
+            | file_activity_type_t::FILE_ACTIVITY_MOVE_MOUNT
+            | file_activity_type_t::FILE_ACTIVITY_SYMLINK => EventData::File {
                 file: FileData::new(
                     value.type_,
                     value.filename,

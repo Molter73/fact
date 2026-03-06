@@ -476,6 +476,30 @@ fn parsing() {
         ),
         (
             r#"
+            process:
+              enabled: true
+            "#,
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(true),
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
+            process:
+              enabled: false
+            "#,
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(false),
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
             paths:
             - /etc
             otel:
@@ -510,6 +534,8 @@ fn parsing() {
             scan_interval: 60
             rate_limit: 50000
             replay: /some/path.jsonl
+            process:
+              enabled: false
             "#,
             FactConfig {
                 paths: [PathBuf::from("/etc")].as_slice().try_into().unwrap(),
@@ -564,6 +590,9 @@ fn parsing() {
                 scan_interval: Some(Duration::from_secs(60)),
                 rate_limit: Some(50000),
                 replay: Some(PathBuf::from("/some/path.jsonl")),
+                process: ProcessConfig {
+                    enabled: Some(false),
+                },
             },
         ),
     ];
@@ -969,6 +998,20 @@ paths:
         (
             "replay: true",
             "replay field has incorrect type: Boolean(true)",
+        ),
+        (
+            r#"
+            process:
+              enabled: 1
+            "#,
+            "process.enabled field has incorrect type: Integer(1)",
+        ),
+        (
+            r#"
+            process:
+              unknown: []
+            "#,
+            "Invalid field 'process.unknown' with value: Array([])",
         ),
         ("unknown:", "Invalid field 'unknown' with value: Null"),
     ];
@@ -1934,6 +1977,55 @@ fn update() {
         ),
         (
             r#"
+            process:
+              enabled: false
+            "#,
+            FactConfig::default(),
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(false),
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
+            process:
+              enabled: false
+            "#,
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(true),
+                },
+                ..Default::default()
+            },
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(false),
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
+            process:
+              enabled: false
+            "#,
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(false),
+                },
+                ..Default::default()
+            },
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(false),
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
             paths:
             - /etc
             grpc:
@@ -1963,6 +2055,8 @@ fn update() {
             hotreload: false
             scan_interval: 60
             rate_limit: 1000
+            process:
+              enabled: false
             "#,
             FactConfig {
                 paths: [PathBuf::from("/etc"), PathBuf::from("/bin")]
@@ -2006,6 +2100,9 @@ fn update() {
                 scan_interval: Some(Duration::from_secs(30)),
                 rate_limit: Some(5000),
                 replay: None,
+                process: ProcessConfig {
+                    enabled: Some(true),
+                },
             },
             FactConfig {
                 paths: [PathBuf::from("/etc")].as_slice().try_into().unwrap(),
@@ -2054,6 +2151,9 @@ fn update() {
                 scan_interval: Some(Duration::from_secs(60)),
                 rate_limit: Some(1000),
                 replay: None,
+                process: ProcessConfig {
+                    enabled: Some(false),
+                },
             },
         ),
     ];
@@ -2063,7 +2163,7 @@ fn update() {
             Err(e) => panic!("Failed to parse configuration\n\tError: {e}\n\tinput: {input}"),
         };
         config.update(&input);
-        assert_eq!(config, expected);
+        assert_eq!(config, expected, "left: {config:#?}\nright: {expected:#?}");
     }
 }
 

@@ -214,6 +214,7 @@ fn setup_input(args: SetupArgs) -> anyhow::Result<(Option<KernelMetrics>, mpsc::
 fn bpf_input(args: SetupArgs) -> anyhow::Result<(Option<KernelMetrics>, mpsc::Receiver<Event>)> {
     let (mut bpf, rx) = Bpf::new(
         args.reloader.paths(),
+        args.reloader.process(),
         &args.bpf_config,
         args.running.clone(),
         args.metrics.bpf_worker.clone(),

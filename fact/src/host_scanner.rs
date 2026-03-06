@@ -766,8 +766,8 @@ You can increase this limit with:
                         // full inode context.
                         if self.event_is_ignored(&event) {
                             let Some(inode) = event.get_inode() else {
-                    continue;
-                        };
+                                continue;
+                            };
                             if self.unref_inode(inode) == 0 {
                                 self.inode_map.borrow_mut().remove(inode);
                             }

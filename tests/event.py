@@ -342,10 +342,6 @@ class Event:
             None if identical, dict of differences if not matching.
         """
         diff = {}
-        event = getattr(other, other.WhichOneof('msg'))
-
-        if not isinstance(event, FileActivity):
-            raise NotImplementedError
 
         process_diff = self.process.diff(other.process)
         if process_diff is not None:
