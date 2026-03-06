@@ -205,6 +205,30 @@ fn parsing() {
         ),
         (
             r#"
+            process:
+              enabled: true
+            "#,
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(true),
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
+            process:
+              enabled: false
+            "#,
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(false),
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
             paths:
             - /etc
             grpc:
@@ -218,6 +242,8 @@ fn parsing() {
             json: false
             ringbuf_size: 8192
             hotreload: false
+            process:
+              enabled: false
             "#,
             FactConfig {
                 paths: Some(vec![PathBuf::from("/etc")]),
@@ -234,6 +260,9 @@ fn parsing() {
                 json: Some(false),
                 ringbuf_size: Some(8192),
                 hotreload: Some(false),
+                process: ProcessConfig {
+                    enabled: Some(false),
+                },
             },
         ),
     ];
@@ -386,6 +415,20 @@ paths:
         (
             "hotreload: 4",
             "hotreload field has incorrect type: Integer(4)",
+        ),
+        (
+            r#"
+            process:
+              enabled: 1
+            "#,
+            "process.enabled field has incorrect type: Integer(1)",
+        ),
+        (
+            r#"
+            process:
+              unknown: []
+            "#,
+            "Invalid field 'process.unknown' with value: Array([])",
         ),
         ("unknown:", "Invalid field 'unknown' with value: Null"),
     ];
@@ -758,6 +801,55 @@ fn update() {
         ),
         (
             r#"
+            process:
+              enabled: false
+            "#,
+            FactConfig::default(),
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(false),
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
+            process:
+              enabled: false
+            "#,
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(true),
+                },
+                ..Default::default()
+            },
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(false),
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
+            process:
+              enabled: false
+            "#,
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(false),
+                },
+                ..Default::default()
+            },
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(false),
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
             paths:
             - /etc
             grpc:
@@ -771,6 +863,8 @@ fn update() {
             json: false
             ringbuf_size: 16384
             hotreload: false
+            process:
+              enabled: false
             "#,
             FactConfig {
                 paths: Some(vec![PathBuf::from("/etc"), PathBuf::from("/bin")]),
@@ -787,6 +881,9 @@ fn update() {
                 json: Some(true),
                 ringbuf_size: Some(64),
                 hotreload: Some(true),
+                process: ProcessConfig {
+                    enabled: Some(true),
+                },
             },
             FactConfig {
                 paths: Some(vec![PathBuf::from("/etc")]),
@@ -803,6 +900,9 @@ fn update() {
                 json: Some(false),
                 ringbuf_size: Some(16384),
                 hotreload: Some(false),
+                process: ProcessConfig {
+                    enabled: Some(false),
+                },
             },
         ),
     ];
@@ -812,7 +912,7 @@ fn update() {
             Err(e) => panic!("Failed to parse configuration\n\tError: {e}\n\tinput: {input}"),
         };
         config.update(&input);
-        assert_eq!(config, expected);
+        assert_eq!(config, expected, "left: {config:#?}\nright: {expected:#?}");
     }
 }
 

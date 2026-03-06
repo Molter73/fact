@@ -16,7 +16,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::{event::Event, host_info, metrics::EventCounter};
+use crate::{config::ProcessConfig, event::Event, host_info, metrics::EventCounter};
 
 use fact_ebpf::{event_t, inode_key_t, inode_value_t, metrics_t, path_prefix_t, LPM_SIZE_MAX};
 
@@ -31,11 +31,14 @@ pub struct Bpf {
 
     paths: Vec<path_prefix_t>,
     paths_config: watch::Receiver<Vec<PathBuf>>,
+
+    process_config: watch::Receiver<ProcessConfig>,
 }
 
 impl Bpf {
     pub fn new(
         paths_config: watch::Receiver<Vec<PathBuf>>,
+        process_config: watch::Receiver<ProcessConfig>,
         ringbuf_size: u32,
         tx: mpsc::Sender<Event>,
     ) -> anyhow::Result<Self> {
@@ -63,6 +66,7 @@ impl Bpf {
             tx,
             paths,
             paths_config,
+            process_config,
         };
 
         bpf.load_paths()?;
@@ -186,7 +190,9 @@ impl Bpf {
                     // read from them, we ignore them here.
                 }
                 Program::BtfTracePoint(prog) => {
-                    prog.attach()?;
+                    if self.process_config.borrow().enabled() {
+                        prog.attach()?;
+                    }
                 }
                 u => unimplemented!("{u:?}"),
             };
@@ -300,8 +306,13 @@ mod bpf_tests {
         config.set_paths(paths);
         let reloader = Reloader::from(config);
         let (tx, mut rx) = mpsc::channel(100);
-        let mut bpf = Bpf::new(reloader.paths(), reloader.config().ringbuf_size(), tx)
-            .expect("Failed to load BPF code");
+        let mut bpf = Bpf::new(
+            reloader.paths(),
+            reloader.process(),
+            reloader.config().ringbuf_size(),
+            tx,
+        )
+        .expect("Failed to load BPF code");
         let (run_tx, run_rx) = watch::channel(true);
         // Create a metrics exporter, but don't start it
         let exporter = Exporter::new(bpf.take_metrics().unwrap());
