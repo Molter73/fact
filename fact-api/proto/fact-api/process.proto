@@ -58,3 +58,14 @@ message Process {
   // whether the process is running on the root mount namespace
   bool in_root_mount_ns = 14;
 }
+
+message ProcessFork {
+  Process parent = 1;
+  Process child = 2;
+}
+
+message ProcessActivity {
+  oneof process {
+    ProcessFork fork = 3;
+  }
+}

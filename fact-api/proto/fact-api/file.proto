@@ -2,7 +2,6 @@ syntax = "proto3";
 
 package fact_api;
 
-import "google/protobuf/timestamp.proto";
 import "fact-api/process.proto";
 
 option cc_enable_arenas = true;
@@ -83,7 +82,6 @@ message FileAclChange {
 }
 
 message FileActivity {
-  google.protobuf.Timestamp timestamp = 1;
   Process process = 2;
   oneof file {
     FileCreation creation = 3;
@@ -97,6 +95,4 @@ message FileActivity {
     FileXattrChange xattr_remove = 12;
     FileAclChange acl = 13;
   }
-  // The hostname/name of the node where the file activity occurred
-  string hostname = 10;
 }

@@ -384,10 +384,10 @@ You can increase this limit with:
     }
 
     fn build_host_path(&self, event: &Event) -> Option<PathBuf> {
-        let parent_inode = event.get_parent_inode();
+        let parent_inode = event.get_parent_inode()?;
 
         if !parent_inode.empty()
-            && let Some(filename) = event.get_filename().file_name()
+            && let Some(filename) = event.get_filename()?.file_name()
             && let Some(parent_host_path) = self.get_host_path(Some(parent_inode))
         {
             Some(parent_host_path.join(filename))
@@ -403,19 +403,14 @@ You can increase this limit with:
     /// path by appending the new file's name.
     fn handle_creation_event(&self, event: &Event) -> anyhow::Result<()> {
         let inode = event.get_inode();
-        if self.get_host_path(Some(inode)).is_some() {
+        if self.get_host_path(inode).is_some() {
             return Ok(());
         }
 
         match self.build_host_path(event) {
             Some(host_path) => self
-                .update_entry_with_inode(*inode, host_path, true)
-                .with_context(|| {
-                    format!(
-                        "Failed to add creation event entry for {}",
-                        event.get_filename().display(),
-                    )
-                }),
+                .update_entry_with_inode(*inode.unwrap(), host_path, true)
+                .context("Failed to add creation event"),
 
             None => Ok(()),
         }
@@ -426,7 +421,9 @@ You can increase this limit with:
     fn handle_unlink_event(&self, event: &Event) {
         self.metrics.scan_inc(ScanLabels::FileRemoved);
 
-        let inode = event.get_inode();
+        let Some(inode) = event.get_inode() else {
+            return;
+        };
         if self.unref_inode(inode) == 0 {
             self.inode_map.borrow_mut().remove(inode);
             self.metrics.scan_inc(ScanLabels::InodeRemoved);
@@ -457,11 +454,17 @@ You can increase this limit with:
 
     /// Handle link events by potentially adding the new link to the inode map.
     fn handle_link_event(&self, event: &mut Event) {
-        match event.get_monitored() {
+        let Some(monitored) = event.get_monitored() else {
+            return;
+        };
+        match monitored {
             monitored_t::MONITORED_BY_INODE => {
                 // The inode is already tracked, the new link just adds
                 // another reference to it.
-                self.usage_count_inc(*event.get_inode());
+                let Some(inode) = event.get_inode() else {
+                    return;
+                };
+                self.usage_count_inc(*inode);
             }
             monitored_t::NOT_MONITORED | monitored_t::MONITORED_BY_PATH => {
                 // The new path is not monitored or no inode tracking is involved, nothing to do.
@@ -473,8 +476,10 @@ You can increase this limit with:
                 if let Some(host_path) = self.build_host_path(event)
                     && self.paths.borrow().globset.is_match(&host_path)
                 {
-                    let inode = *event.get_inode();
-                    if let Err(e) = self.update_entry_with_inode(inode, host_path.clone(), true) {
+                    let Some(inode) = event.get_inode() else {
+                        return;
+                    };
+                    if let Err(e) = self.update_entry_with_inode(*inode, host_path.clone(), true) {
                         warn!("Failed to add link event entry: {e}");
                     }
                     event.set_host_path(host_path);
@@ -485,13 +490,18 @@ You can increase this limit with:
     }
 
     fn handle_rename_event(&self, event: &mut Event) {
-        match event.get_monitored() {
+        let Some(monitored) = event.get_monitored() else {
+            return;
+        };
+        match monitored {
             monitored_t::MONITORED_BY_INODE => {
                 // This condition means a file is being renamed and taking the
                 // place of an existing, tracked file. We need to remove the
                 // inode we are landing on and put the associated host path in
                 // the old inode.
-                let inode = event.get_inode();
+                let Some(inode) = event.get_inode() else {
+                    return;
+                };
                 let mut inode_map = self.inode_map.borrow_mut();
                 let path = if self.unref_inode(inode) == 0 {
                     match inode_map.remove(inode) {
@@ -536,7 +546,9 @@ You can increase this limit with:
                 // The new path is not monitored and the old path is most likely
                 // matching by path, we don't need to do anything in this case.
             }
-            monitored_t::MONITORED_BY_PARENT if !event.get_inode().empty() => {
+            monitored_t::MONITORED_BY_PARENT
+                if event.get_inode().is_some_and(|inode| !inode.empty()) =>
+            {
                 // The parent for the target is monitored, but the file itself
                 // is not. Remove the entry for the old file from the map.
                 let old_inode = event
@@ -553,11 +565,17 @@ You can increase this limit with:
                 // path that didn't hold anything, we need to figure out the
                 // host path and check if we should track it.
                 let mut inode_map = self.inode_map.borrow_mut();
-                let Some(new_host_parent) = inode_map.get(event.get_parent_inode()) else {
+                let Some(parent_inode) = event.get_parent_inode() else {
+                    return;
+                };
+                let Some(new_host_parent) = inode_map.get(parent_inode) else {
                     warn!("Failed to get parent host path");
                     return;
                 };
-                let Some(filename) = event.get_filename().file_name() else {
+                let Some(filename) = event.get_filename() else {
+                    return;
+                };
+                let Some(filename) = filename.file_name() else {
                     warn!("Failed to get last component from event: {event:#?}");
                     return;
                 };
@@ -615,7 +633,9 @@ You can increase this limit with:
 
     /// Handle a mount being modified in a monitored directory.
     fn handle_mount_event(&self, event: &Event) {
-        if let Err(e) = self.scan_partial(event.get_host_path()) {
+        if let Some(host_path) = event.get_host_path()
+            && let Err(e) = self.scan_partial(host_path)
+        {
             warn!("Host scan failed: {e:?}");
         }
     }
@@ -624,7 +644,11 @@ You can increase this limit with:
     fn handle_symlink_event(&self, event: &Event) -> anyhow::Result<()> {
         // Since `glob` follows symlinks unconditionally, we need to do
         // so as well.
-        self.scan_partial(event.get_host_path())
+        if let Some(host_path) = event.get_host_path() {
+            self.scan_partial(host_path)
+        } else {
+            Ok(())
+        }
     }
 
     /// Periodically notify the host scanner main task that a scan needs
@@ -659,7 +683,9 @@ You can increase this limit with:
     fn event_is_ignored(&self, event: &Event) -> bool {
         let paths = self.paths.borrow();
         event.is_ignored(&paths.globset)
-            && !paths.globset.is_match(event.get_host_path())
+            && event
+                .get_host_path()
+                .is_none_or(|path| !paths.globset.is_match(path))
             && event
                 .get_old_host_path()
                 .is_none_or(|path| !paths.globset.is_match(path))
@@ -695,7 +721,7 @@ You can increase this limit with:
                                 warn!("Failed to handle creation event: {e}");
                             }
 
-                        if let Some(host_path) = self.get_host_path(Some(event.get_inode())) {
+                        if let Some(host_path) = self.get_host_path(event.get_inode()) {
                             self.metrics.scan_inc(ScanLabels::InodeHit);
                             event.set_host_path(host_path);
                         }
@@ -739,7 +765,9 @@ You can increase this limit with:
                         // whether the event is ignored now that we have the
                         // full inode context.
                         if self.event_is_ignored(&event) {
-                            let inode = event.get_inode();
+                            let Some(inode) = event.get_inode() else {
+                    continue;
+                        };
                             if self.unref_inode(inode) == 0 {
                                 self.inode_map.borrow_mut().remove(inode);
                             }

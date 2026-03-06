@@ -121,6 +121,7 @@ typedef enum file_activity_type_t {
   FILE_ACTIVITY_UMOUNT,
   FILE_ACTIVITY_MOVE_MOUNT,
   FILE_ACTIVITY_SYMLINK,
+  PROCESS_FORK,
 } file_activity_type_t;
 
 struct event_t {
@@ -155,6 +156,9 @@ struct event_t {
       acl_type_t acl_type;
       struct acl_entry_t entries[FACT_MAX_ACL_ENTRIES];
     } acl;
+    struct {
+      process_t child;
+    } fork;
   };
 };
 
@@ -204,4 +208,5 @@ struct metrics_t {
   struct metrics_by_hook_t sb_umount;
   struct metrics_by_hook_t move_mount;
   struct metrics_by_hook_t path_symlink;
+  struct metrics_by_hook_t sched_fork;
 };

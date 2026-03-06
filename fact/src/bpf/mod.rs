@@ -240,6 +240,12 @@ impl Bpf {
                     };
                     prog.load(name, btf)?
                 }
+                Program::BtfTracePoint(prog) => {
+                    let Some(hook) = name.strip_prefix("trace_") else {
+                        bail!("Invalid hook name: {name}");
+                    };
+                    prog.load(hook, btf)?
+                }
                 u => unimplemented!("{u:?}"),
             }
         }
@@ -247,13 +253,22 @@ impl Bpf {
     }
 
     /// Attaches the supplied BPF program if it is loaded into the kernel.
-    fn attach_prog(prog: &mut Program) -> Result<LsmLink, BpfAttachError> {
+    fn attach_prog(prog: &mut Program) -> Result<Option<LsmLink>, BpfAttachError> {
         match prog {
             Program::Lsm(prog) if prog.fd().is_ok() => {
                 let link_id = prog.attach()?;
-                Ok(prog.take_link(link_id)?)
+                Ok(Some(prog.take_link(link_id)?))
             }
             Program::Lsm(_) => Err(BpfAttachError::NotLoaded),
+            Program::Iter(_) => {
+                // Iterators need to be attached when attempting to
+                // read from them, we ignore them here.
+                Ok(None)
+            }
+            Program::BtfTracePoint(prog) => {
+                prog.attach()?;
+                Ok(None)
+            }
             u => unimplemented!("{u:?}"),
         }
     }
@@ -272,7 +287,7 @@ impl Bpf {
                 _ => false,
             })
             .filter_map(|(_, prog)| match Bpf::attach_prog(prog) {
-                Ok(link) => Some(Ok(link)),
+                Ok(link) => Some(Ok(link?)),
                 Err(BpfAttachError::NotLoaded) => None,
                 Err(e) => Some(Err(e)),
             })

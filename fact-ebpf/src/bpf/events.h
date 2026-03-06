@@ -30,8 +30,16 @@ __always_inline static bool reserve_event(struct submit_event_args_t* args) {
   return true;
 }
 
-__always_inline static void __submit_event(struct submit_event_args_t* args,
-                                           bool use_bpf_d_path) {
+__always_inline static void __submit_event(struct submit_event_args_t* args) {
+  args->event->timestamp = bpf_ktime_get_boot_ns();
+
+  args->metrics->added++;
+  bpf_ringbuf_submit(args->event, 0);
+  return;
+}
+
+__always_inline static void __submit_file_event(struct submit_event_args_t* args,
+                                                bool use_bpf_d_path) {
   struct event_t* event = args->event;
   event->timestamp = bpf_ktime_get_boot_ns();
   event->monitored = args->monitored;
@@ -48,14 +56,14 @@ __always_inline static void __submit_event(struct submit_event_args_t* args,
     goto error;
   }
 
-  int64_t err = process_fill(&event->process, use_bpf_d_path);
+  struct task_struct* task = bpf_get_current_task_btf();
+  int64_t err = process_fill(&event->process, task, use_bpf_d_path, true);
   if (err) {
     bpf_printk("Failed to fill process information: %d", err);
     goto error;
   }
 
-  args->metrics->added++;
-  bpf_ringbuf_submit(event, 0);
+  __submit_event(args);
   return;
 
 error:
@@ -70,7 +78,7 @@ __always_inline static void submit_open_event(struct submit_event_args_t* args,
   }
   args->event->type = event_type;
 
-  __submit_event(args, true);
+  __submit_file_event(args, true);
 }
 
 __always_inline static void submit_link_event(struct submit_event_args_t* args) {
@@ -79,7 +87,7 @@ __always_inline static void submit_link_event(struct submit_event_args_t* args) 
   }
   args->event->type = FILE_ACTIVITY_LINK;
 
-  __submit_event(args, path_hooks_support_bpf_d_path);
+  __submit_file_event(args, path_hooks_support_bpf_d_path);
 }
 
 __always_inline static void submit_unlink_event(struct submit_event_args_t* args) {
@@ -88,7 +96,7 @@ __always_inline static void submit_unlink_event(struct submit_event_args_t* args
   }
   args->event->type = FILE_ACTIVITY_UNLINK;
 
-  __submit_event(args, path_hooks_support_bpf_d_path);
+  __submit_file_event(args, path_hooks_support_bpf_d_path);
 }
 
 __always_inline static void submit_mode_event(struct submit_event_args_t* args,
@@ -102,7 +110,7 @@ __always_inline static void submit_mode_event(struct submit_event_args_t* args,
   args->event->chmod.new = mode;
   args->event->chmod.old = old_mode;
 
-  __submit_event(args, path_hooks_support_bpf_d_path);
+  __submit_file_event(args, path_hooks_support_bpf_d_path);
 }
 
 __always_inline static void submit_ownership_event(struct submit_event_args_t* args,
@@ -120,7 +128,7 @@ __always_inline static void submit_ownership_event(struct submit_event_args_t* a
   args->event->chown.old.uid = old_uid;
   args->event->chown.old.gid = old_gid;
 
-  __submit_event(args, path_hooks_support_bpf_d_path);
+  __submit_file_event(args, path_hooks_support_bpf_d_path);
 }
 
 __always_inline static void submit_rename_event(struct submit_event_args_t* args,
@@ -136,7 +144,7 @@ __always_inline static void submit_rename_event(struct submit_event_args_t* args
   inode_copy(&args->event->from.inode, old_inode);
   args->event->from.monitored = old_monitored;
 
-  __submit_event(args, path_hooks_support_bpf_d_path);
+  __submit_file_event(args, path_hooks_support_bpf_d_path);
 }
 
 __always_inline static void submit_mkdir_event(struct submit_event_args_t* args) {
@@ -146,7 +154,7 @@ __always_inline static void submit_mkdir_event(struct submit_event_args_t* args)
   args->event->type = DIR_ACTIVITY_CREATION;
 
   // d_instantiate doesn't support bpf_d_path, so we use false and rely on the stashed path from path_mkdir
-  __submit_event(args, false);
+  __submit_file_event(args, false);
 }
 
 __always_inline static void submit_rmdir_event(struct submit_event_args_t* args) {
@@ -155,7 +163,7 @@ __always_inline static void submit_rmdir_event(struct submit_event_args_t* args)
   }
   args->event->type = DIR_ACTIVITY_UNLINK;
 
-  __submit_event(args, path_hooks_support_bpf_d_path);
+  __submit_file_event(args, path_hooks_support_bpf_d_path);
 }
 
 __always_inline static void submit_xattr_event(struct submit_event_args_t* args,
@@ -167,7 +175,7 @@ __always_inline static void submit_xattr_event(struct submit_event_args_t* args,
   args->event->type = event_type;
   bpf_probe_read_str(args->event->xattr.name, XATTR_NAME_MAX_LEN, xattr_name);
 
-  __submit_event(args, false);
+  __submit_file_event(args, false);
 }
 
 __always_inline static void submit_acl_event(struct submit_event_args_t* args,
@@ -219,7 +227,7 @@ __always_inline static void submit_acl_event(struct submit_event_args_t* args,
   }
 
   // inode_set_acl does not support bpf_d_path (no struct path available)
-  __submit_event(args, false);
+  __submit_file_event(args, false);
 }
 
 __always_inline static void submit_mount_event(struct submit_event_args_t* args) {
@@ -228,7 +236,7 @@ __always_inline static void submit_mount_event(struct submit_event_args_t* args)
   }
   args->event->type = FILE_ACTIVITY_MOUNT;
 
-  __submit_event(args, true);
+  __submit_file_event(args, true);
 }
 
 __always_inline static void submit_umount_event(struct submit_event_args_t* args) {
@@ -237,7 +245,7 @@ __always_inline static void submit_umount_event(struct submit_event_args_t* args
   }
   args->event->type = FILE_ACTIVITY_UMOUNT;
 
-  __submit_event(args, true);
+  __submit_file_event(args, true);
 }
 
 __always_inline static void submit_move_mount_event(struct submit_event_args_t* args,
@@ -252,7 +260,7 @@ __always_inline static void submit_move_mount_event(struct submit_event_args_t* 
   inode_copy(&args->event->from.inode, from_inode);
   args->event->from.monitored = from_monitored;
 
-  __submit_event(args, false);
+  __submit_file_event(args, false);
 }
 
 __always_inline static void submit_symlink_event(struct submit_event_args_t* args,
@@ -265,5 +273,18 @@ __always_inline static void submit_symlink_event(struct submit_event_args_t* arg
     args->event->from.filename[0] = '\0';
   }
 
-  __submit_event(args, false);
+  __submit_file_event(args, false);
+}
+
+__always_inline static void submit_fork_event(struct submit_event_args_t* args,
+                                              struct task_struct* parent,
+                                              struct task_struct* child) {
+  if (!reserve_event(args)) {
+    return;
+  }
+
+  process_fill(&args->event->process, parent, false, false);
+  process_fill(&args->event->fork.child, child, false, false);
+
+  __submit_event(args);
 }

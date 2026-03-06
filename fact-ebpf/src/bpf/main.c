@@ -6,8 +6,8 @@
 #include "types.h"
 #include "inode.h"
 #include "maps.h"
-#include "events.h"
 #include "bound_path.h"
+#include "events.h"
 #include "upid.h"
 
 #include <bpf/bpf_helpers.h>
@@ -724,5 +724,19 @@ FACT_BPF_PROG3(path_symlink, struct path*, dir, struct dentry*, dentry, const ch
 error:
   delete_d_instantiate_ctx();
   m->path_symlink.error++;
+  return 0;
+}
+
+SEC("tp_btf/sched_process_fork")
+int BPF_PROG(trace_sched_process_fork, struct task_struct* parent, struct task_struct* child) {
+  struct metrics_t* m = get_metrics();
+  if (m == NULL) {
+    return 0;
+  }
+  struct submit_event_args_t args = {.metrics = &m->sched_fork};
+
+  args.metrics->total++;
+
+  submit_fork_event(&args, parent, child);
   return 0;
 }

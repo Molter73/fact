@@ -11,7 +11,12 @@ use tokio::{
     task::JoinSet,
 };
 
-use crate::{config::OTelConfig, metrics::EventCounter, output::EventReceiver};
+use crate::{
+    config::OTelConfig,
+    event::{EventData, ProcessData},
+    metrics::EventCounter,
+    output::EventReceiver,
+};
 
 pub(super) struct Client {
     subscriber: mpsc::Sender<oneshot::Sender<EventReceiver>>,
@@ -88,11 +93,17 @@ impl Client {
                             let event= Arc::unwrap_or_clone(event);
                             let mut record = logger.create_log_record();
                             record.set_severity_number(Severity::Info);
-                            record.set_body(
+                            let event_type = event.event_type();
+                            let body = match &event.data {
+                                EventData::File {  file,.. } =>  {
                                 format!("{} on {} ({})",
-                                    event.event_type(),
-                                    event.get_filename().display(),
-                                    event.get_host_path().display()).into());
+                                    event_type,
+                                    file.get_filename().display(),
+                                    file.get_host_path().display())
+                                }
+                                EventData::Process(ProcessData::Fork(_)) => "Fork event".to_string(),
+                            };
+                            record.set_body(body.into());
                             if let AnyValue::Map(map) = event.into() {
                                 for (k, v) in *map {
                                     record.add_attribute(k, v);
