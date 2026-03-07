@@ -9,12 +9,14 @@ use std::{
 };
 
 use globset::GlobSet;
+use libc::CLOCK_REALTIME;
 #[cfg(feature = "otel")]
 use opentelemetry::logs::AnyValue;
 use serde::{Deserialize, Serialize};
 
 use fact_ebpf::{
     PATH_MAX, XATTR_NAME_MAX_LEN, event_t, file_activity_type_t, inode_key_t, monitored_t,
+    process_t,
 };
 
 use crate::host_info;
@@ -436,6 +438,7 @@ impl Event {
             File { file, .. } => file.event_type(),
             Process(ProcessData::Fork(_)) => "fork",
             Process(ProcessData::Exec(_)) => "exec",
+            Process(ProcessData::Proc(_)) => "proc",
         }
     }
 }
@@ -446,6 +449,21 @@ impl TryFrom<&event_t> for Event {
     fn try_from(value: &event_t) -> Result<Self, Self::Error> {
         let timestamp = host_info::get_boot_time() + value.timestamp;
         let data = EventData::try_from(value)?;
+
+        Ok(Event {
+            timestamp,
+            hostname: host_info::get_hostname(),
+            data,
+        })
+    }
+}
+
+impl TryFrom<&process_t> for Event {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &process_t) -> Result<Self, Self::Error> {
+        let timestamp = host_info::get_clock(CLOCK_REALTIME);
+        let data = EventData::try_from(*value)?;
 
         Ok(Event {
             timestamp,
@@ -499,7 +517,8 @@ impl From<Event> for opentelemetry::logs::AnyValue {
                 map.insert("parent".into(), parent.into());
                 map.insert("child".into(), child.into());
             }
-            EventData::Process(ProcessData::Exec(ProcessExecData(proc))) => {
+            EventData::Process(ProcessData::Proc(proc))
+            | EventData::Process(ProcessData::Exec(ProcessExecData(proc))) => {
                 map.insert("process".into(), proc.into());
             }
         }
@@ -589,6 +608,15 @@ impl TryFrom<&event_t> for EventData {
         };
 
         Ok(data)
+    }
+}
+
+impl TryFrom<process_t> for EventData {
+    type Error = anyhow::Error;
+
+    fn try_from(value: process_t) -> Result<Self, Self::Error> {
+        let proc = Process::try_from(value)?;
+        Ok(EventData::Process(ProcessData::Proc(proc)))
     }
 }
 
@@ -1282,6 +1310,7 @@ impl PartialEq for XattrFileData {
 pub enum ProcessData {
     Fork(ProcessForkData),
     Exec(ProcessExecData),
+    Proc(Process),
 }
 
 #[cfg(test)]
@@ -1290,6 +1319,7 @@ impl PartialEq for ProcessData {
         match (self, other) {
             (Self::Fork(left), Self::Fork(right)) => left == right,
             (Self::Exec(left), Self::Exec(right)) => left == right,
+            (Self::Proc(left), Self::Proc(right)) => left == right,
             (_, _) => false,
         }
     }
@@ -1302,6 +1332,7 @@ impl From<ProcessData> for fact_api::process_activity::Process {
             ProcessData::Exec(ProcessExecData(proc)) => {
                 fact_api::process_activity::Process::Exec(proc.into())
             }
+            ProcessData::Proc(proc) => fact_api::process_activity::Process::Proc(proc.into()),
         }
     }
 }

@@ -11,7 +11,7 @@ use libc::c_char;
 use log::{error, info, warn};
 use tokio::{
     fs::File,
-    io::{BufReader, unix::AsyncFd},
+    io::{AsyncReadExt, BufReader, unix::AsyncFd},
     sync::{mpsc, watch},
     task::JoinSet,
 };
@@ -23,7 +23,9 @@ use crate::{
     metrics::EventCounter,
 };
 
-use fact_ebpf::{LPM_SIZE_MAX, event_t, inode_key_t, inode_value_t, metrics_t, path_prefix_t};
+use fact_ebpf::{
+    LPM_SIZE_MAX, event_t, inode_key_t, inode_value_t, metrics_t, path_prefix_t, process_t,
+};
 
 mod checks;
 
@@ -292,6 +294,7 @@ impl Bpf {
     /// If any attach fails, programs that were already attached during
     /// this call are dropped.
     fn attach_progs(&mut self) -> anyhow::Result<()> {
+        info!("attaching progs");
         let attach_tracepoints = self.process_config.borrow().enabled();
         self.links = self
             .obj
@@ -301,13 +304,13 @@ impl Bpf {
                 _ => false,
             })
             .filter_map(
-                |(_, prog)| match Bpf::attach_prog(prog, attach_tracepoints) {
+                |(name, prog)| match Bpf::attach_prog(prog, attach_tracepoints) {
                     Ok(link) => Some(Ok(link?)),
                     Err(BpfAttachError::NotLoaded) => None,
-                    Err(e) => Some(Err(e)),
+                    Err(e) => Some(Err(anyhow::anyhow!("Failed to attach {name}: {e:?}"))),
                 },
             )
-            .collect::<Result<Vec<_>, BpfAttachError>>()?;
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(())
     }
@@ -333,10 +336,8 @@ impl Bpf {
 
         is_valid
     }
-    //
-    // TODO: This method will be useful once we start tracking processes.
-    #[allow(dead_code)]
-    fn iter_tasks(&mut self) -> anyhow::Result<BufReader<File>> {
+
+    async fn iter_tasks(&mut self) -> anyhow::Result<()> {
         let prog = self
             .obj
             .program_mut("iter_task")
@@ -348,7 +349,25 @@ impl Bpf {
         let link = prog.take_link(link_id)?;
         let file = link.into_file()?;
 
-        Ok(BufReader::new(file.into()))
+        let mut reader: BufReader<File> = BufReader::new(file.into());
+        let mut buf: [u8; std::mem::size_of::<process_t>()] = unsafe { std::mem::zeroed() };
+        loop {
+            match reader.read_exact(&mut buf).await {
+                Ok(_) => {
+                    let proc: &process_t = unsafe { &*(buf.as_ptr() as *const _) };
+                    let event = Event::try_from(proc)?;
+                    if self.tx.send(event).await.is_err() {
+                        bail!("No BPF consumers left, stopping...");
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => {
+                    bail!("Iterator error: {e:#?}");
+                }
+            }
+        }
+
+        Ok(())
     }
 
     // Gather events from the ring buffer and print them out.
@@ -356,6 +375,10 @@ impl Bpf {
         info!("Starting BPF worker...");
 
         task_set.spawn(async move {
+            if self.process_config.borrow().enabled() {
+                self.iter_tasks().await?;
+            }
+
             let rb = self.take_ringbuffer()?;
             let mut fd = AsyncFd::new(rb)?;
             let mut config_is_closed = false;

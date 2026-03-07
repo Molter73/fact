@@ -77,4 +77,5 @@ define_kernel_metrics!(
     path_symlink,
     sched_fork,
     sched_exec,
+    iter_task,
 );
