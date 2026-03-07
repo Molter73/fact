@@ -12,12 +12,33 @@
 #include <bpf/bpf_core_read.h>
 // clang-format on
 
-__always_inline static const char* get_memory_cgroup(struct helper_t* helper) {
+volatile const pid_t monitored_pid = 0;
+
+/**
+ * Check if the process is to be monitored.
+ *
+ * The process will be considered monitored if:
+ * - We are monitoring all process activity.
+ * - The pid of the process is explicitly monitored.
+ * - The process has triggered any event in the past.
+ * - The process is the child of a monitored process.
+ *
+ * Any processes that have forked from monitored processes will also be
+ * considered to be monitored.
+ */
+bool process_is_monitored(const struct task_struct* task) {
+  if (monitored_pid == 0 || task->tgid == monitored_pid) {
+    return true;
+  }
+
+  struct upid_t* upid = bpf_task_storage_get(&task_upid_map, task->group_leader, NULL, 0);
+  return upid != NULL;
+}
+
+__always_inline static const char* get_memory_cgroup(struct helper_t* helper, const struct task_struct* task) {
   if (!bpf_core_enum_value_exists(enum cgroup_subsys_id, memory_cgrp_id)) {
     return NULL;
   }
-
-  struct task_struct* task = (struct task_struct*)bpf_get_current_task();
 
   // We're guessing which cgroup controllers are enabled for this task. The
   // assumption is that memory controller is present more often than
@@ -78,8 +99,7 @@ __always_inline static const char* get_memory_cgroup(struct helper_t* helper) {
   return helper->buf;
 }
 
-__always_inline static void process_fill_lineage(process_t* p, struct helper_t* helper, bool use_bpf_d_path) {
-  struct task_struct* task = (struct task_struct*)bpf_get_current_task_btf();
+__always_inline static void process_fill_lineage(process_t* p, const struct task_struct* task, struct helper_t* helper, bool use_bpf_d_path) {
   p->lineage_len = 0;
 
   for (int i = 0; i < LINEAGE_MAX; i++) {
@@ -97,26 +117,24 @@ __always_inline static void process_fill_lineage(process_t* p, struct helper_t* 
   }
 }
 
-__always_inline static unsigned long get_mount_ns() {
-  struct task_struct* task = (struct task_struct*)bpf_get_current_task_btf();
+__always_inline static unsigned long get_mount_ns(const struct task_struct* task) {
   return task->nsproxy->mnt_ns->ns.inum;
 }
 
-__always_inline static int64_t process_fill(process_t* p, bool use_bpf_d_path) {
-  struct task_struct* task = (struct task_struct*)bpf_get_current_task_btf();
+__always_inline static int64_t process_fill(process_t* p, const struct task_struct* task, bool use_bpf_d_path) {
   uint32_t key = 0;
-  uint64_t uid_gid = bpf_get_current_uid_gid();
-  p->uid = uid_gid & 0xFFFFFFFF;
-  p->gid = (uid_gid >> 32) & 0xFFFFFFFF;
+  p->uid = task->cred->uid.val;
+  p->gid = task->cred->gid.val;
   p->login_uid = task->loginuid.val;
-  p->pid = (bpf_get_current_pid_tgid() >> 32) & 0xFFFFFFFF;
+  p->pid = task->tgid;
   p->upid = get_task_upid(task);
-  u_int64_t err = bpf_get_current_comm(p->comm, TASK_COMM_LEN);
+  uint64_t err = bpf_probe_read_kernel(p->comm, TASK_COMM_LEN, task->comm);
   if (err != 0) {
     bpf_printk("Failed to fill task comm");
     return err;
   }
 
+  /* TODO: figure out if arguments are needed. If so, fix the iterator
   unsigned long arg_start = task->mm->arg_start;
   unsigned long arg_end = task->mm->arg_end;
   p->args_len = (arg_end - arg_start) & 0xFFF;
@@ -126,6 +144,7 @@ __always_inline static int64_t process_fill(process_t* p, bool use_bpf_d_path) {
     bpf_printk("Failed to fill task args");
     return err;
   }
+  */
 
   struct helper_t* helper = bpf_map_lookup_elem(&helper_map, &key);
   if (helper == NULL) {
@@ -135,14 +154,14 @@ __always_inline static int64_t process_fill(process_t* p, bool use_bpf_d_path) {
 
   d_path(&task->mm->exe_file->f_path, p->exe_path, PATH_MAX, use_bpf_d_path);
 
-  const char* cg = get_memory_cgroup(helper);
+  const char* cg = get_memory_cgroup(helper, task);
   if (cg != NULL) {
     bpf_probe_read_str(p->memory_cgroup, PATH_MAX, cg);
   }
 
-  p->in_root_mount_ns = get_mount_ns() == host_mount_ns;
+  p->in_root_mount_ns = get_mount_ns(task) == host_mount_ns;
 
-  process_fill_lineage(p, helper, use_bpf_d_path);
+  process_fill_lineage(p, task, helper, use_bpf_d_path);
 
   return 0;
 }

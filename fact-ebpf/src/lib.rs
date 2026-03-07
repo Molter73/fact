@@ -93,28 +93,28 @@ impl Serialize for inode_key_t {
 unsafe impl Pod for inode_key_t {}
 
 impl metrics_by_hook_t {
-    fn accumulate(&self, other: &metrics_by_hook_t) -> metrics_by_hook_t {
-        let mut m = metrics_by_hook_t { ..*self };
+    fn accumulate(mut self, other: &metrics_by_hook_t) -> metrics_by_hook_t {
+        self.total += other.total;
+        self.added += other.added;
+        self.error += other.error;
+        self.ignored += other.ignored;
+        self.ringbuffer_full += other.ringbuffer_full;
 
-        m.total += other.total;
-        m.added += other.added;
-        m.error += other.error;
-        m.ignored += other.ignored;
-        m.ringbuffer_full += other.ringbuffer_full;
-
-        m
+        self
     }
 }
 
 impl metrics_t {
-    pub fn accumulate(&self, other: &metrics_t) -> metrics_t {
-        let mut m = metrics_t { ..*self };
-        m.file_open = m.file_open.accumulate(&other.file_open);
-        m.path_unlink = m.path_unlink.accumulate(&other.path_unlink);
-        m.path_chmod = m.path_chmod.accumulate(&other.path_chmod);
-        m.path_chown = m.path_chown.accumulate(&other.path_chown);
-        m.path_rename = m.path_rename.accumulate(&other.path_rename);
-        m
+    pub fn accumulate(mut self, other: &metrics_t) -> metrics_t {
+        self.file_open = self.file_open.accumulate(&other.file_open);
+        self.path_unlink = self.path_unlink.accumulate(&other.path_unlink);
+        self.path_chmod = self.path_chmod.accumulate(&other.path_chmod);
+        self.path_chown = self.path_chown.accumulate(&other.path_chown);
+        self.path_rename = self.path_rename.accumulate(&other.path_rename);
+        self.sched_fork = self.sched_fork.accumulate(&other.sched_fork);
+        self.sched_exec = self.sched_exec.accumulate(&other.sched_exec);
+        self.iter_task = self.iter_task.accumulate(&other.iter_task);
+        self
     }
 }
 

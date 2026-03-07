@@ -3,10 +3,22 @@ syntax = "proto3";
 package fact_api;
 
 import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
 import "fact-api/file.proto";
+import "fact-api/process.proto";
 
 option cc_enable_arenas = true;
 
+message FactMsg {
+  google.protobuf.Timestamp timestamp = 1;
+  // The hostname/name of the node where the file activity occurred
+  string hostname = 2;
+  oneof msg {
+    FileActivity file = 3;
+    ProcessActivity process = 4;
+  }
+}
+
 service FileActivityService {
-  rpc Communicate(stream FileActivity) returns (google.protobuf.Empty);
+  rpc Communicate(stream FactMsg) returns (google.protobuf.Empty);
 }

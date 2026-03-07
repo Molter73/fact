@@ -11,14 +11,16 @@ use libc::c_char;
 use log::{error, info};
 use tokio::{
     fs::File,
-    io::{unix::AsyncFd, BufReader},
+    io::{unix::AsyncFd, AsyncReadExt, BufReader},
     sync::{mpsc, watch},
     task::JoinHandle,
 };
 
-use crate::{event::Event, host_info, metrics::EventCounter};
+use crate::{config::ProcessConfig, event::Event, host_info, metrics::EventCounter};
 
-use fact_ebpf::{event_t, inode_key_t, inode_value_t, metrics_t, path_prefix_t, LPM_SIZE_MAX};
+use fact_ebpf::{
+    event_t, inode_key_t, inode_value_t, metrics_t, path_prefix_t, process_t, LPM_SIZE_MAX,
+};
 
 mod checks;
 
@@ -31,11 +33,14 @@ pub struct Bpf {
 
     paths: Vec<path_prefix_t>,
     paths_config: watch::Receiver<Vec<PathBuf>>,
+
+    process_config: watch::Receiver<ProcessConfig>,
 }
 
 impl Bpf {
     pub fn new(
         paths_config: watch::Receiver<Vec<PathBuf>>,
+        process_config: watch::Receiver<ProcessConfig>,
         ringbuf_size: u32,
         tx: mpsc::Sender<Event>,
     ) -> anyhow::Result<Self> {
@@ -53,6 +58,11 @@ impl Bpf {
                 &(checks.path_hooks_support_bpf_d_path as u8),
                 true,
             )
+            .override_global(
+                "monitored_pid",
+                &process_config.borrow().monitored_pid(),
+                true,
+            )
             .allow_unsupported_maps()
             .map_max_entries(RINGBUFFER_NAME, ringbuf_size * 1024)
             .load(fact_ebpf::EBPF_OBJ)?;
@@ -63,6 +73,7 @@ impl Bpf {
             tx,
             paths,
             paths_config,
+            process_config,
         };
 
         bpf.load_paths()?;
@@ -163,6 +174,12 @@ impl Bpf {
                     };
                     prog.load(name, btf)?
                 }
+                Program::BtfTracePoint(prog) => {
+                    let Some(hook) = name.strip_prefix("trace_") else {
+                        bail!("Invalid hook name: {name}");
+                    };
+                    prog.load(hook, btf)?
+                }
                 u => unimplemented!("{u:?}"),
             }
         }
@@ -179,15 +196,18 @@ impl Bpf {
                     // Iterators need to be attached when attempting to
                     // read from them, we ignore them here.
                 }
+                Program::BtfTracePoint(prog) => {
+                    if self.process_config.borrow().enabled() {
+                        prog.attach()?;
+                    }
+                }
                 u => unimplemented!("{u:?}"),
             };
         }
         Ok(())
     }
 
-    // TODO: This method will be useful once we start tracking processes.
-    #[allow(dead_code)]
-    fn iter_tasks(&mut self) -> anyhow::Result<BufReader<File>> {
+    async fn iter_tasks(&mut self) -> anyhow::Result<()> {
         let prog = self
             .obj
             .program_mut("iter_task")
@@ -199,7 +219,25 @@ impl Bpf {
         let link = prog.take_link(link_id)?;
         let file = link.into_file()?;
 
-        Ok(BufReader::new(file.into()))
+        let mut reader: BufReader<File> = BufReader::new(file.into());
+        let mut buf: [u8; std::mem::size_of::<process_t>()] = unsafe { std::mem::zeroed() };
+        loop {
+            match reader.read_exact(&mut buf).await {
+                Ok(_) => {
+                    let proc: &process_t = unsafe { &*(buf.as_ptr() as *const _) };
+                    let event = Event::try_from(proc)?;
+                    if self.tx.send(event).await.is_err() {
+                        bail!("No BPF consumers left, stopping...");
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => {
+                    bail!("Iterator error: {e:#?}");
+                }
+            }
+        }
+
+        Ok(())
     }
 
     // Gather events from the ring buffer and print them out.
@@ -213,6 +251,10 @@ impl Bpf {
         tokio::spawn(async move {
             self.attach_progs()
                 .context("Failed to attach ebpf programs")?;
+
+            if self.process_config.borrow().enabled() {
+                self.iter_tasks().await?;
+            }
 
             let rb = self.take_ringbuffer()?;
             let mut fd = AsyncFd::new(rb)?;
@@ -291,8 +333,13 @@ mod bpf_tests {
         config.set_paths(paths);
         let reloader = Reloader::from(config);
         let (tx, mut rx) = mpsc::channel(100);
-        let mut bpf = Bpf::new(reloader.paths(), reloader.config().ringbuf_size(), tx)
-            .expect("Failed to load BPF code");
+        let mut bpf = Bpf::new(
+            reloader.paths(),
+            reloader.process(),
+            reloader.config().ringbuf_size(),
+            tx,
+        )
+        .expect("Failed to load BPF code");
         let (run_tx, run_rx) = watch::channel(true);
         // Create a metrics exporter, but don't start it
         let exporter = Exporter::new(bpf.take_metrics().unwrap());

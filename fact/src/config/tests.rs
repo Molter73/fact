@@ -205,6 +205,45 @@ fn parsing() {
         ),
         (
             r#"
+            process:
+              enabled: true
+            "#,
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(true),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
+            process:
+              enabled: false
+            "#,
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(false),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
+            process:
+              monitored_pid: 10
+            "#,
+            FactConfig {
+                process: ProcessConfig {
+                    monitored_pid: Some(10),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
             paths:
             - /etc
             grpc:
@@ -218,6 +257,9 @@ fn parsing() {
             json: false
             ringbuf_size: 8192
             hotreload: false
+            process:
+              enabled: false
+              monitored_pid: 10
             "#,
             FactConfig {
                 paths: Some(vec![PathBuf::from("/etc")]),
@@ -234,6 +276,10 @@ fn parsing() {
                 json: Some(false),
                 ringbuf_size: Some(8192),
                 hotreload: Some(false),
+                process: ProcessConfig {
+                    enabled: Some(false),
+                    monitored_pid: Some(10),
+                },
             },
         ),
     ];
@@ -386,6 +432,27 @@ paths:
         (
             "hotreload: 4",
             "hotreload field has incorrect type: Integer(4)",
+        ),
+        (
+            r#"
+            process:
+              enabled: 1
+            "#,
+            "process.enabled field has incorrect type: Integer(1)",
+        ),
+        (
+            r#"
+            process:
+              monitored_pid: true
+            "#,
+            "process.monitored_pid field has incorrect type: Boolean(true)",
+        ),
+        (
+            r#"
+            process:
+              unknown: []
+            "#,
+            "Invalid field 'process.unknown' with value: Array([])",
         ),
         ("unknown:", "Invalid field 'unknown' with value: Null"),
     ];
@@ -758,6 +825,114 @@ fn update() {
         ),
         (
             r#"
+            process:
+              enabled: false
+            "#,
+            FactConfig::default(),
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(false),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
+            process:
+              enabled: false
+            "#,
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(true),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(false),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
+            process:
+              enabled: false
+            "#,
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(false),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            FactConfig {
+                process: ProcessConfig {
+                    enabled: Some(false),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
+            process:
+              monitored_pid: 10
+            "#,
+            FactConfig::default(),
+            FactConfig {
+                process: ProcessConfig {
+                    monitored_pid: Some(10),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
+            process:
+              monitored_pid: 10
+            "#,
+            FactConfig {
+                process: ProcessConfig {
+                    monitored_pid: Some(20),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            FactConfig {
+                process: ProcessConfig {
+                    monitored_pid: Some(10),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
+            process:
+              monitored_pid: 10
+            "#,
+            FactConfig {
+                process: ProcessConfig {
+                    monitored_pid: Some(10),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            FactConfig {
+                process: ProcessConfig {
+                    monitored_pid: Some(10),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
             paths:
             - /etc
             grpc:
@@ -771,6 +946,9 @@ fn update() {
             json: false
             ringbuf_size: 16384
             hotreload: false
+            process:
+              enabled: false
+              monitored_pid: 10
             "#,
             FactConfig {
                 paths: Some(vec![PathBuf::from("/etc"), PathBuf::from("/bin")]),
@@ -787,6 +965,10 @@ fn update() {
                 json: Some(true),
                 ringbuf_size: Some(64),
                 hotreload: Some(true),
+                process: ProcessConfig {
+                    enabled: Some(true),
+                    monitored_pid: Some(20),
+                },
             },
             FactConfig {
                 paths: Some(vec![PathBuf::from("/etc")]),
@@ -803,6 +985,10 @@ fn update() {
                 json: Some(false),
                 ringbuf_size: Some(16384),
                 hotreload: Some(false),
+                process: ProcessConfig {
+                    enabled: Some(false),
+                    monitored_pid: Some(10),
+                },
             },
         ),
     ];
@@ -812,7 +998,7 @@ fn update() {
             Err(e) => panic!("Failed to parse configuration\n\tError: {e}\n\tinput: {input}"),
         };
         config.update(&input);
-        assert_eq!(config, expected);
+        assert_eq!(config, expected, "left: {config:#?}\nright: {expected:#?}");
     }
 }
 

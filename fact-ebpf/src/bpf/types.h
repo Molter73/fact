@@ -56,6 +56,8 @@ typedef enum file_activity_type_t {
   FILE_ACTIVITY_CHMOD,
   FILE_ACTIVITY_CHOWN,
   FILE_ACTIVITY_RENAME,
+  PROCESS_FORK,
+  PROCESS_EXEC,
 } file_activity_type_t;
 
 struct event_t {
@@ -79,6 +81,9 @@ struct event_t {
       char old_filename[PATH_MAX];
       inode_key_t old_inode;
     } rename;
+    struct {
+      process_t child;
+    } fork;
   };
 };
 
@@ -111,4 +116,7 @@ struct metrics_t {
   struct metrics_by_hook_t path_chmod;
   struct metrics_by_hook_t path_chown;
   struct metrics_by_hook_t path_rename;
+  struct metrics_by_hook_t sched_fork;
+  struct metrics_by_hook_t sched_exec;
+  struct metrics_by_hook_t iter_task;
 };

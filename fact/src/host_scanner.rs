@@ -144,7 +144,7 @@ impl HostScanner {
                             break;
                         };
 
-                        if let Some(host_path) = self.get_host_path(Some(event.get_inode())) {
+                        if let Some(host_path) = self.get_host_path(event.get_inode()) {
                             event.set_host_path(host_path);
                         }
 

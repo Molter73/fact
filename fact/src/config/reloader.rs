@@ -9,6 +9,8 @@ use tokio::{
     time::interval,
 };
 
+use crate::config::ProcessConfig;
+
 use super::{EndpointConfig, FactConfig, GrpcConfig, CONFIG_FILES};
 
 pub struct Reloader {
@@ -16,6 +18,7 @@ pub struct Reloader {
     endpoint: watch::Sender<EndpointConfig>,
     grpc: watch::Sender<GrpcConfig>,
     paths: watch::Sender<Vec<PathBuf>>,
+    process: watch::Sender<ProcessConfig>,
     files: HashMap<&'static str, i64>,
     trigger: Arc<Notify>,
 }
@@ -73,6 +76,12 @@ impl Reloader {
     /// changed.
     pub fn paths(&self) -> watch::Receiver<Vec<PathBuf>> {
         self.paths.subscribe()
+    }
+
+    /// Subscribe to get notifications when process configuration is
+    /// changed.
+    pub fn process(&self) -> watch::Receiver<ProcessConfig> {
+        self.process.subscribe()
     }
 
     /// Get a reference to the internal trigger for manual reloading of
@@ -171,6 +180,16 @@ impl Reloader {
             }
         });
 
+        self.process.send_if_modified(|old| {
+            if *old != new.process {
+                debug!("Sending new process configuration...");
+                *old = new.process.clone();
+                true
+            } else {
+                false
+            }
+        });
+
         if self.config.hotreload() != new.hotreload() {
             warn!("Changes to the hotreload field only take effect on startup");
         }
@@ -203,6 +222,7 @@ impl From<FactConfig> for Reloader {
         let (endpoint, _) = watch::channel(config.endpoint.clone());
         let (grpc, _) = watch::channel(config.grpc.clone());
         let (paths, _) = watch::channel(config.paths().to_vec());
+        let (process, _) = watch::channel(config.process.clone());
         let trigger = Arc::new(Notify::new());
 
         Reloader {
@@ -212,6 +232,7 @@ impl From<FactConfig> for Reloader {
             paths,
             files,
             trigger,
+            process,
         }
     }
 }

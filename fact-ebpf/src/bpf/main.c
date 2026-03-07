@@ -5,9 +5,10 @@
 #include "types.h"
 #include "inode.h"
 #include "maps.h"
-#include "events.h"
 #include "bound_path.h"
+#include "events.h"
 #include "upid.h"
+#include "process.h"
 
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
@@ -19,20 +20,6 @@ char _license[] SEC("license") = "Dual MIT/GPL";
 #define FMODE_WRITE ((fmode_t)(1 << 1))
 #define FMODE_PWRITE ((fmode_t)(1 << 4))
 #define FMODE_CREATED ((fmode_t)(1 << 20))
-
-SEC("iter/task")
-int iter_task(struct bpf_iter__task* ctx) {
-  struct seq_file* seq = ctx->meta->seq;
-  struct task_struct* task = ctx->task;
-  // Verifier requires this check.
-  if (task == NULL) {
-    return 0;
-  }
-
-  BPF_SEQ_PRINTF(seq, "%-8d %-8d %-8d %s\n", task->tgid, task->pid, get_task_upid(task), task->comm);
-
-  return 0;
-}
 
 SEC("lsm/file_open")
 int BPF_PROG(trace_file_open, struct file* file) {
@@ -253,5 +240,84 @@ int BPF_PROG(trace_path_rename, struct path* old_dir,
 
 error:
   m->path_rename.error++;
+  return 0;
+}
+
+SEC("tp_btf/sched_process_fork")
+int BPF_PROG(trace_sched_process_fork, struct task_struct* parent, struct task_struct* child) {
+  struct metrics_t* m = get_metrics();
+  if (m == NULL) {
+    return 0;
+  }
+
+  m->sched_fork.total++;
+
+  if (!process_is_monitored(parent) && !process_is_monitored(child)) {
+    m->sched_fork.ignored++;
+    return 0;
+  }
+
+  submit_fork_event(&m->sched_fork, parent, child);
+  return 0;
+}
+
+SEC("tp_btf/sched_process_exec")
+int BPF_PROG(trace_sched_process_exec, struct task_struct* task, pid_t old_pid, struct linux_binprm* bprm) {
+  struct metrics_t* m = get_metrics();
+  if (m == NULL) {
+    return 0;
+  }
+
+  m->sched_exec.total++;
+
+  if (!process_is_monitored(task)) {
+    m->sched_exec.ignored++;
+    return 0;
+  }
+
+  submit_exec_event(&m->sched_exec, task);
+  return 0;
+}
+
+SEC("iter/task")
+int iter_task(struct bpf_iter__task* ctx) {
+  struct seq_file* seq = ctx->meta->seq;
+  struct task_struct* task = ctx->task;
+
+  // Stop condition
+  if (task == NULL) {
+    return 0;
+  }
+
+  struct metrics_t* m = get_metrics();
+  if (m == NULL) {
+    return 0;
+  }
+
+  m->iter_task.total++;
+
+  if (!process_is_monitored(task) || task != task->group_leader) {
+    m->iter_task.ignored++;
+    return 0;
+  }
+
+  struct helper_t* helper = get_helper();
+  if (helper == NULL) {
+    goto error;
+  }
+
+  int64_t err = process_fill(&helper->process, task, true);
+  if (err != 0) {
+    bpf_printk("Iter: failed to fill process info: %d", err);
+    goto error;
+  }
+
+  m->iter_task.added++;
+  bpf_seq_write(seq, &helper->process, sizeof(process_t));
+
+  return 0;
+
+error:
+  m->iter_task.error++;
   return 0;
 }

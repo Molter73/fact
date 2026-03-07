@@ -31,6 +31,7 @@ pub struct FactConfig {
     json: Option<bool>,
     ringbuf_size: Option<u32>,
     hotreload: Option<bool>,
+    pub process: ProcessConfig,
 }
 
 impl FactConfig {
@@ -79,6 +80,7 @@ impl FactConfig {
 
         self.grpc.update(&from.grpc);
         self.endpoint.update(&from.endpoint);
+        self.process.update(&from.process);
 
         if let Some(skip_pre_flight) = from.skip_pre_flight {
             self.skip_pre_flight = Some(skip_pre_flight);
@@ -215,6 +217,10 @@ impl TryFrom<Vec<Yaml>> for FactConfig {
                         bail!("hotreload field has incorrect type: {v:?}");
                     };
                     config.hotreload = Some(hotreload);
+                }
+                "process" => {
+                    let process = v.as_hash().unwrap();
+                    config.process = ProcessConfig::try_from(process)?;
                 }
                 name => bail!("Invalid field '{name}' with value: {v:?}"),
             }
@@ -358,6 +364,70 @@ impl TryFrom<&yaml::Hash> for GrpcConfig {
     }
 }
 
+#[derive(Debug, Default, Eq, Clone)]
+pub struct ProcessConfig {
+    enabled: Option<bool>,
+    monitored_pid: Option<u32>,
+}
+
+impl ProcessConfig {
+    fn update(&mut self, from: &ProcessConfig) {
+        if let Some(enabled) = from.enabled {
+            self.enabled = Some(enabled);
+        }
+
+        if let Some(monitored_pid) = from.monitored_pid {
+            self.monitored_pid = Some(monitored_pid);
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled.unwrap_or(false)
+    }
+
+    pub fn monitored_pid(&self) -> u32 {
+        self.monitored_pid.unwrap_or(0)
+    }
+}
+
+impl TryFrom<&yaml::Hash> for ProcessConfig {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &yaml::Hash) -> Result<Self, Self::Error> {
+        let mut process = ProcessConfig::default();
+        for (k, v) in value.iter() {
+            let Some(k) = k.as_str() else {
+                bail!("key is not string: {k:?}");
+            };
+
+            match k {
+                "enabled" => {
+                    let enabled = v.as_bool();
+                    if enabled.is_none() {
+                        bail!("process.enabled field has incorrect type: {v:?}");
+                    };
+                    process.enabled = enabled;
+                }
+                "monitored_pid" => {
+                    let Some(monitored_pid) = v.as_i64() else {
+                        bail!("process.monitored_pid field has incorrect type: {v:?}");
+                    };
+                    process.monitored_pid = Some(monitored_pid as u32);
+                }
+                name => bail!("Invalid field 'process.{name}' with value: {v:?}"),
+            }
+        }
+
+        Ok(process)
+    }
+}
+
+impl PartialEq for ProcessConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.enabled == other.enabled
+    }
+}
+
 #[derive(Debug, Parser)]
 #[clap(version = crate::version::FACT_VERSION, about)]
 pub struct FactCli {
@@ -429,6 +499,21 @@ pub struct FactCli {
     hotreload: bool,
     #[arg(long, overrides_with = "hotreload", hide(true))]
     no_hotreload: bool,
+
+    /// Whether fact should send process information
+    #[arg(
+        long,
+        overrides_with = "no_process_enabled",
+        env = "FACT_PROCESS_ENABLED"
+    )]
+    process_enabled: bool,
+    #[arg(long, overrides_with = "process_enabled", hide(true))]
+    no_process_enabled: bool,
+
+    /// Limit fact to only alert process information (fork/exec) on a
+    /// specific pid
+    #[arg(long, env = "FACT_PROCESS_PID")]
+    monitored_pid: Option<u32>,
 }
 
 impl FactCli {
@@ -448,6 +533,10 @@ impl FactCli {
             json: resolve_bool_arg(self.json, self.no_json),
             ringbuf_size: self.ringbuf_size,
             hotreload: resolve_bool_arg(self.hotreload, self.no_hotreload),
+            process: ProcessConfig {
+                enabled: resolve_bool_arg(self.process_enabled, self.no_process_enabled),
+                monitored_pid: self.monitored_pid,
+            },
         }
     }
 }

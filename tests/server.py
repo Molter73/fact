@@ -7,6 +7,7 @@ from time import sleep
 import grpc
 
 from fact_api import fact_iservice_pb2_grpc
+from fact_api.process_pb2 import ProcessActivity
 
 
 class FileActivityService(fact_iservice_pb2_grpc.FileActivityServiceServicer):
@@ -89,6 +90,10 @@ class FileActivityService(fact_iservice_pb2_grpc.FileActivityServiceServicer):
                 continue
 
             print(f'Got event: {msg}')
+
+            # TODO: Figure out a way to properly test process events
+            if isinstance(getattr(msg, msg.WhichOneof('msg')), ProcessActivity):
+                continue
 
             # Check if msg matches the next expected event
             diff = events[0].diff(msg)
