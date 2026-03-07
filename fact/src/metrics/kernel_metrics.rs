@@ -15,6 +15,7 @@ pub struct KernelMetrics {
     path_rename: EventCounter,
     sched_fork: EventCounter,
     sched_exec: EventCounter,
+    iter_task: EventCounter,
     map: PerCpuArray<MapData, metrics_t>,
 }
 
@@ -55,6 +56,11 @@ impl KernelMetrics {
             "Events processed by the sched_exec tracepoint",
             &[], // Labels are not needed since `collect` will add them all
         );
+        let iter_task = EventCounter::new(
+            "kernel_iter_task_events",
+            "Events processed by the task iterator",
+            &[], // Labels are not needed since `collect` will add them all
+        );
 
         file_open.register(reg);
         path_unlink.register(reg);
@@ -63,6 +69,7 @@ impl KernelMetrics {
         path_rename.register(reg);
         sched_fork.register(reg);
         sched_exec.register(reg);
+        iter_task.register(reg);
 
         KernelMetrics {
             file_open,
@@ -72,6 +79,7 @@ impl KernelMetrics {
             path_rename,
             sched_fork,
             sched_exec,
+            iter_task,
             map: kernel_metrics,
         }
     }
@@ -123,6 +131,7 @@ impl KernelMetrics {
         KernelMetrics::refresh_labels(&self.path_rename, &metrics.path_rename);
         KernelMetrics::refresh_labels(&self.sched_fork, &metrics.sched_fork);
         KernelMetrics::refresh_labels(&self.sched_exec, &metrics.sched_exec);
+        KernelMetrics::refresh_labels(&self.iter_task, &metrics.iter_task);
 
         Ok(())
     }

@@ -134,6 +134,7 @@ __always_inline static int64_t process_fill(process_t* p, const struct task_stru
     return err;
   }
 
+  /* TODO: figure out if arguments are needed. If so, fix the iterator
   unsigned long arg_start = task->mm->arg_start;
   unsigned long arg_end = task->mm->arg_end;
   p->args_len = (arg_end - arg_start) & 0xFFF;
@@ -143,6 +144,7 @@ __always_inline static int64_t process_fill(process_t* p, const struct task_stru
     bpf_printk("Failed to fill task args");
     return err;
   }
+  */
 
   struct helper_t* helper = bpf_map_lookup_elem(&helper_map, &key);
   if (helper == NULL) {

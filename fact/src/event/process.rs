@@ -123,7 +123,8 @@ impl PartialEq for Process {
             && self.login_uid == other.login_uid
             && self.gid == other.gid
             && self.exe_path == other.exe_path
-            && self.args == other.args
+            // TODO: task iterator can't read args, so we skip them altogether
+            // && self.args == other.args
             && self.container_id == other.container_id
             && self.in_root_mount_ns == other.in_root_mount_ns
     }

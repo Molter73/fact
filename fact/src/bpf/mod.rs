@@ -11,14 +11,16 @@ use libc::c_char;
 use log::{error, info};
 use tokio::{
     fs::File,
-    io::{unix::AsyncFd, BufReader},
+    io::{unix::AsyncFd, AsyncReadExt, BufReader},
     sync::{mpsc, watch},
     task::JoinHandle,
 };
 
 use crate::{config::ProcessConfig, event::Event, host_info, metrics::EventCounter};
 
-use fact_ebpf::{event_t, inode_key_t, inode_value_t, metrics_t, path_prefix_t, LPM_SIZE_MAX};
+use fact_ebpf::{
+    event_t, inode_key_t, inode_value_t, metrics_t, path_prefix_t, process_t, LPM_SIZE_MAX,
+};
 
 mod checks;
 
@@ -205,9 +207,7 @@ impl Bpf {
         Ok(())
     }
 
-    // TODO: This method will be useful once we start tracking processes.
-    #[allow(dead_code)]
-    fn iter_tasks(&mut self) -> anyhow::Result<BufReader<File>> {
+    async fn iter_tasks(&mut self) -> anyhow::Result<()> {
         let prog = self
             .obj
             .program_mut("iter_task")
@@ -219,7 +219,25 @@ impl Bpf {
         let link = prog.take_link(link_id)?;
         let file = link.into_file()?;
 
-        Ok(BufReader::new(file.into()))
+        let mut reader: BufReader<File> = BufReader::new(file.into());
+        let mut buf: [u8; std::mem::size_of::<process_t>()] = unsafe { std::mem::zeroed() };
+        loop {
+            match reader.read_exact(&mut buf).await {
+                Ok(_) => {
+                    let proc: &process_t = unsafe { &*(buf.as_ptr() as *const _) };
+                    let event = Event::try_from(proc)?;
+                    if self.tx.send(event).await.is_err() {
+                        bail!("No BPF consumers left, stopping...");
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => {
+                    bail!("Iterator error: {e:#?}");
+                }
+            }
+        }
+
+        Ok(())
     }
 
     // Gather events from the ring buffer and print them out.
@@ -233,6 +251,10 @@ impl Bpf {
         tokio::spawn(async move {
             self.attach_progs()
                 .context("Failed to attach ebpf programs")?;
+
+            if self.process_config.borrow().enabled() {
+                self.iter_tasks().await?;
+            }
 
             let rb = self.take_ringbuffer()?;
             let mut fd = AsyncFd::new(rb)?;

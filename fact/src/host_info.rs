@@ -41,7 +41,7 @@ pub fn remove_host_mount(path: &Path) -> PathBuf {
     }
 }
 
-fn get_clock(clockid: clockid_t) -> u64 {
+pub fn get_clock(clockid: clockid_t) -> u64 {
     let mut tp = timespec {
         tv_sec: 0,
         tv_nsec: 0,

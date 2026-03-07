@@ -118,4 +118,5 @@ struct metrics_t {
   struct metrics_by_hook_t path_rename;
   struct metrics_by_hook_t sched_fork;
   struct metrics_by_hook_t sched_exec;
+  struct metrics_by_hook_t iter_task;
 };

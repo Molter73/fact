@@ -21,24 +21,6 @@ char _license[] SEC("license") = "Dual MIT/GPL";
 #define FMODE_PWRITE ((fmode_t)(1 << 4))
 #define FMODE_CREATED ((fmode_t)(1 << 20))
 
-SEC("iter/task")
-int iter_task(struct bpf_iter__task* ctx) {
-  struct seq_file* seq = ctx->meta->seq;
-  struct task_struct* task = ctx->task;
-  // Verifier requires this check.
-  if (task == NULL) {
-    return 0;
-  }
-
-  if (!process_is_monitored(task)) {
-    return 0;
-  }
-
-  BPF_SEQ_PRINTF(seq, "%-8d %-8d %-8d %s\n", task->tgid, task->pid, get_task_upid(task), task->comm);
-
-  return 0;
-}
-
 SEC("lsm/file_open")
 int BPF_PROG(trace_file_open, struct file* file) {
   struct metrics_t* m = get_metrics();
@@ -294,5 +276,48 @@ int BPF_PROG(trace_sched_process_exec, struct task_struct* task, pid_t old_pid, 
   }
 
   submit_exec_event(&m->sched_exec, task);
+  return 0;
+}
+
+SEC("iter/task")
+int iter_task(struct bpf_iter__task* ctx) {
+  struct seq_file* seq = ctx->meta->seq;
+  struct task_struct* task = ctx->task;
+
+  // Stop condition
+  if (task == NULL) {
+    return 0;
+  }
+
+  struct metrics_t* m = get_metrics();
+  if (m == NULL) {
+    return 0;
+  }
+
+  m->iter_task.total++;
+
+  if (!process_is_monitored(task) || task != task->group_leader) {
+    m->iter_task.ignored++;
+    return 0;
+  }
+
+  struct helper_t* helper = get_helper();
+  if (helper == NULL) {
+    goto error;
+  }
+
+  int64_t err = process_fill(&helper->process, task, true);
+  if (err != 0) {
+    bpf_printk("Iter: failed to fill process info: %d", err);
+    goto error;
+  }
+
+  m->iter_task.added++;
+  bpf_seq_write(seq, &helper->process, sizeof(process_t));
+
+  return 0;
+
+error:
+  m->iter_task.error++;
   return 0;
 }

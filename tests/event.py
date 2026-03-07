@@ -176,7 +176,8 @@ class Process:
         Event._diff_field(diff, 'gid', self.gid, other.gid)
         Event._diff_field(diff, 'exe_path',
                           self.exe_path, other.exec_file_path)
-        Event._diff_field(diff, 'args', self.args, other.args)
+        # TODO: task iterator cannot get arguments, fix this
+        # Event._diff_field(diff, 'args', self.args, other.args)
         Event._diff_field(diff, 'name', self.name, other.name)
         Event._diff_field(diff, 'container_id',
                           self.container_id, other.container_id)

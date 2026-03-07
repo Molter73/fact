@@ -6,9 +6,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use libc::CLOCK_REALTIME;
 use serde::Serialize;
 
-use fact_ebpf::{event_t, file_activity_type_t, inode_key_t, PATH_MAX};
+use fact_ebpf::{event_t, file_activity_type_t, inode_key_t, process_t, PATH_MAX};
 
 use crate::host_info;
 use process::Process;
@@ -234,6 +235,21 @@ impl TryFrom<&event_t> for Event {
     }
 }
 
+impl TryFrom<&process_t> for Event {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &process_t) -> Result<Self, Self::Error> {
+        let timestamp = host_info::get_clock(CLOCK_REALTIME);
+        let data = EventData::try_from(*value)?;
+
+        Ok(Event {
+            timestamp,
+            hostname: host_info::get_hostname(),
+            data,
+        })
+    }
+}
+
 impl From<Event> for fact_api::FactMsg {
     fn from(value: Event) -> Self {
         let timestamp = timestamp_to_proto(value.timestamp);
@@ -330,6 +346,15 @@ impl TryFrom<&event_t> for EventData {
         };
 
         Ok(data)
+    }
+}
+
+impl TryFrom<process_t> for EventData {
+    type Error = anyhow::Error;
+
+    fn try_from(value: process_t) -> Result<Self, Self::Error> {
+        let proc = Process::try_from(value)?;
+        Ok(EventData::Process(ProcessData::Proc(proc)))
     }
 }
 
@@ -557,6 +582,7 @@ impl PartialEq for RenameFileData {
 pub enum ProcessData {
     Fork(ProcessForkData),
     Exec(ProcessExecData),
+    Proc(Process),
 }
 
 #[cfg(test)]
@@ -565,6 +591,7 @@ impl PartialEq for ProcessData {
         match (self, other) {
             (Self::Fork(left), Self::Fork(right)) => left == right,
             (Self::Exec(left), Self::Exec(right)) => left == right,
+            (Self::Proc(left), Self::Proc(right)) => left == right,
             (_, _) => false,
         }
     }
@@ -577,6 +604,7 @@ impl From<ProcessData> for fact_api::process_activity::Process {
             ProcessData::Exec(ProcessExecData(proc)) => {
                 fact_api::process_activity::Process::Exec(proc.into())
             }
+            ProcessData::Proc(proc) => fact_api::process_activity::Process::Proc(proc.into()),
         }
     }
 }
