@@ -56,6 +56,11 @@ impl Bpf {
                 &(checks.path_hooks_support_bpf_d_path as u8),
                 true,
             )
+            .override_global(
+                "monitored_pid",
+                &process_config.borrow().monitored_pid(),
+                true,
+            )
             .allow_unsupported_maps()
             .map_max_entries(RINGBUFFER_NAME, ringbuf_size * 1024)
             .load(fact_ebpf::EBPF_OBJ)?;
