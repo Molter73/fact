@@ -287,6 +287,7 @@ impl_metrics_t!(
     move_mount,
     path_symlink,
     sched_fork,
+    sched_exec,
 );
 
 unsafe impl Pod for metrics_t {}

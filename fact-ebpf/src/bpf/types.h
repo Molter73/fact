@@ -122,6 +122,7 @@ typedef enum file_activity_type_t {
   FILE_ACTIVITY_MOVE_MOUNT,
   FILE_ACTIVITY_SYMLINK,
   PROCESS_FORK,
+  PROCESS_EXEC,
 } file_activity_type_t;
 
 struct event_t {
@@ -209,4 +210,5 @@ struct metrics_t {
   struct metrics_by_hook_t move_mount;
   struct metrics_by_hook_t path_symlink;
   struct metrics_by_hook_t sched_fork;
+  struct metrics_by_hook_t sched_exec;
 };

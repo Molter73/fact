@@ -102,6 +102,7 @@ impl Client {
                                     file.get_host_path().display())
                                 }
                                 EventData::Process(ProcessData::Fork(_)) => "Fork event".to_string(),
+                                EventData::Process(ProcessData::Exec(_)) => "Exec event".to_string(),
                             };
                             record.set_body(body.into());
                             if let AnyValue::Map(map) = event.into() {

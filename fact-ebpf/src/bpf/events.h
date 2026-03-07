@@ -283,8 +283,21 @@ __always_inline static void submit_fork_event(struct submit_event_args_t* args,
     return;
   }
 
+  args->event->type = PROCESS_FORK;
   process_fill(&args->event->process, parent, false, false);
   process_fill(&args->event->fork.child, child, false, false);
+
+  __submit_event(args);
+}
+
+__always_inline static void submit_exec_event(struct submit_event_args_t* args,
+                                              struct task_struct* task) {
+  if (!reserve_event(args)) {
+    return;
+  }
+
+  args->event->type = PROCESS_EXEC;
+  process_fill(&args->event->process, task, false, false);
 
   __submit_event(args);
 }

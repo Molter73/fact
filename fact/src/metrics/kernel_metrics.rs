@@ -76,4 +76,5 @@ define_kernel_metrics!(
     move_mount,
     path_symlink,
     sched_fork,
+    sched_exec,
 );
