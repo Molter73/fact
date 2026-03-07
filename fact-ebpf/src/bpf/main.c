@@ -9,6 +9,7 @@
 #include "bound_path.h"
 #include "events.h"
 #include "upid.h"
+#include "process.h"
 
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
@@ -65,6 +66,10 @@ int iter_task(struct bpf_iter__task* ctx) {
   struct task_struct* task = ctx->task;
   // Verifier requires this check.
   if (task == NULL) {
+    return 0;
+  }
+
+  if (!process_is_monitored(task)) {
     return 0;
   }
 
@@ -737,7 +742,13 @@ int BPF_PROG(trace_sched_process_fork, struct task_struct* parent, struct task_s
 
   args.metrics->total++;
 
+  if (!process_is_monitored(parent) && !process_is_monitored(child)) {
+    m->sched_fork.ignored++;
+    return 0;
+  }
+
   submit_fork_event(&args, parent, child);
+
   return 0;
 }
 
@@ -750,6 +761,11 @@ int BPF_PROG(trace_sched_process_exec, struct task_struct* task, pid_t old_pid, 
   struct submit_event_args_t args = {.metrics = &m->sched_exec};
 
   args.metrics->total++;
+
+  if (!process_is_monitored(task)) {
+    m->sched_exec.ignored++;
+    return 0;
+  }
 
   submit_exec_event(&args, task);
   return 0;

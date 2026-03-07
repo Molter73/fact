@@ -821,9 +821,10 @@ impl TryFrom<&yaml::Hash> for BpfProgConfig {
     }
 }
 
-#[derive(Debug, Default, PartialEq, Eq, Clone, Serialize)]
+#[derive(Debug, Default, Eq, Clone, Serialize)]
 pub struct ProcessConfig {
     enabled: Option<bool>,
+    monitored_pid: Option<u32>,
 }
 
 impl ProcessConfig {
@@ -831,10 +832,18 @@ impl ProcessConfig {
         if let Some(enabled) = from.enabled {
             self.enabled = Some(enabled);
         }
+
+        if let Some(monitored_pid) = from.monitored_pid {
+            self.monitored_pid = Some(monitored_pid);
+        }
     }
 
     pub fn enabled(&self) -> bool {
         self.enabled.unwrap_or(false)
+    }
+
+    pub fn monitored_pid(&self) -> u32 {
+        self.monitored_pid.unwrap_or(0)
     }
 }
 
@@ -856,11 +865,23 @@ impl TryFrom<&yaml::Hash> for ProcessConfig {
                     };
                     process.enabled = enabled;
                 }
+                "monitored_pid" => {
+                    let Some(monitored_pid) = v.as_i64() else {
+                        bail!("process.monitored_pid field has incorrect type: {v:?}");
+                    };
+                    process.monitored_pid = Some(monitored_pid as u32);
+                }
                 name => bail!("Invalid field 'process.{name}' with value: {v:?}"),
             }
         }
 
         Ok(process)
+    }
+}
+
+impl PartialEq for ProcessConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.enabled == other.enabled
     }
 }
 
@@ -1063,6 +1084,11 @@ pub struct FactCli {
     process_enabled: bool,
     #[arg(long, overrides_with = "process_enabled", hide(true))]
     no_process_enabled: bool,
+
+    /// Limit fact to only alert process information (fork/exec) on a
+    /// specific pid
+    #[arg(long, env = "FACT_PROCESS_PID")]
+    monitored_pid: Option<u32>,
 }
 
 impl FactCli {
@@ -1111,6 +1137,7 @@ impl FactCli {
             replay: self.replay.clone(),
             process: ProcessConfig {
                 enabled: resolve_bool_arg(self.process_enabled, self.no_process_enabled),
+                monitored_pid: self.monitored_pid,
             },
         }
     }

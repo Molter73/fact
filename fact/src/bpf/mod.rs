@@ -60,7 +60,7 @@ impl Bpf {
 
         // Include the BPF object as raw bytes at compile-time and load it
         // at runtime.
-        let mut obj = Bpf::load_ebpf(&checks, bpf_config)?;
+        let mut obj = Bpf::load_ebpf(&checks, bpf_config, &*process_config.borrow())?;
 
         Bpf::validate_config(&obj, bpf_config);
         let paths_lpm_map = Bpf::take_path_prefix(&mut obj);
@@ -101,7 +101,11 @@ impl Bpf {
         Ok(())
     }
 
-    fn load_ebpf(checks: &Checks, bpf_config: &BpfConfig) -> anyhow::Result<Ebpf> {
+    fn load_ebpf(
+        checks: &Checks,
+        bpf_config: &BpfConfig,
+        process_config: &ProcessConfig,
+    ) -> anyhow::Result<Ebpf> {
         // Include the BPF object as raw bytes at compile-time and load it
         // at runtime.
         aya::EbpfLoader::new()
@@ -111,6 +115,7 @@ impl Bpf {
                 &(checks.path_hooks_support_bpf_d_path as u8),
                 true,
             )
+            .override_global("monitored_pid", &process_config.monitored_pid(), true)
             .map_max_entries(RINGBUFFER_NAME, bpf_config.ringbuf_size() * 1024)
             .map_max_entries("inode_map", bpf_config.inodes_max())
             .map_max_entries("d_instantiate_ctx", bpf_config.d_instantiate_ctx_size())

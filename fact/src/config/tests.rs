@@ -482,6 +482,7 @@ fn parsing() {
             FactConfig {
                 process: ProcessConfig {
                     enabled: Some(true),
+                    ..Default::default()
                 },
                 ..Default::default()
             },
@@ -494,6 +495,20 @@ fn parsing() {
             FactConfig {
                 process: ProcessConfig {
                     enabled: Some(false),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
+            process:
+              monitored_pid: 10
+            "#,
+            FactConfig {
+                process: ProcessConfig {
+                    monitored_pid: Some(10),
+                    ..Default::default()
                 },
                 ..Default::default()
             },
@@ -536,6 +551,7 @@ fn parsing() {
             replay: /some/path.jsonl
             process:
               enabled: false
+              monitored_pid: 10
             "#,
             FactConfig {
                 paths: [PathBuf::from("/etc")].as_slice().try_into().unwrap(),
@@ -592,6 +608,7 @@ fn parsing() {
                 replay: Some(PathBuf::from("/some/path.jsonl")),
                 process: ProcessConfig {
                     enabled: Some(false),
+                    monitored_pid: Some(10),
                 },
             },
         ),
@@ -1005,6 +1022,13 @@ paths:
               enabled: 1
             "#,
             "process.enabled field has incorrect type: Integer(1)",
+        ),
+        (
+            r#"
+            process:
+              monitored_pid: true
+            "#,
+            "process.monitored_pid field has incorrect type: Boolean(true)",
         ),
         (
             r#"
@@ -1984,6 +2008,7 @@ fn update() {
             FactConfig {
                 process: ProcessConfig {
                     enabled: Some(false),
+                    ..Default::default()
                 },
                 ..Default::default()
             },
@@ -1996,12 +2021,14 @@ fn update() {
             FactConfig {
                 process: ProcessConfig {
                     enabled: Some(true),
+                    ..Default::default()
                 },
                 ..Default::default()
             },
             FactConfig {
                 process: ProcessConfig {
                     enabled: Some(false),
+                    ..Default::default()
                 },
                 ..Default::default()
             },
@@ -2014,12 +2041,68 @@ fn update() {
             FactConfig {
                 process: ProcessConfig {
                     enabled: Some(false),
+                    ..Default::default()
                 },
                 ..Default::default()
             },
             FactConfig {
                 process: ProcessConfig {
                     enabled: Some(false),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
+            process:
+              monitored_pid: 10
+            "#,
+            FactConfig::default(),
+            FactConfig {
+                process: ProcessConfig {
+                    monitored_pid: Some(10),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
+            process:
+              monitored_pid: 10
+            "#,
+            FactConfig {
+                process: ProcessConfig {
+                    monitored_pid: Some(20),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            FactConfig {
+                process: ProcessConfig {
+                    monitored_pid: Some(10),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
+            process:
+              monitored_pid: 10
+            "#,
+            FactConfig {
+                process: ProcessConfig {
+                    monitored_pid: Some(10),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            FactConfig {
+                process: ProcessConfig {
+                    monitored_pid: Some(10),
+                    ..Default::default()
                 },
                 ..Default::default()
             },
@@ -2057,6 +2140,7 @@ fn update() {
             rate_limit: 1000
             process:
               enabled: false
+              monitored_pid: 10
             "#,
             FactConfig {
                 paths: [PathBuf::from("/etc"), PathBuf::from("/bin")]
@@ -2102,6 +2186,7 @@ fn update() {
                 replay: None,
                 process: ProcessConfig {
                     enabled: Some(true),
+                    monitored_pid: Some(20),
                 },
             },
             FactConfig {
@@ -2153,6 +2238,7 @@ fn update() {
                 replay: None,
                 process: ProcessConfig {
                     enabled: Some(false),
+                    monitored_pid: Some(10),
                 },
             },
         ),
