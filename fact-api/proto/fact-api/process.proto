@@ -67,5 +67,6 @@ message ProcessFork {
 message ProcessActivity {
   oneof process {
     ProcessFork fork = 3;
+    Process exec = 4;
   }
 }

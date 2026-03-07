@@ -146,3 +146,16 @@ __always_inline static void submit_fork_event(struct metrics_by_hook_t* m,
 
   __submit_event(event, m, PROCESS_FORK);
 }
+
+__always_inline static void submit_exec_event(struct metrics_by_hook_t* m,
+                                              const struct task_struct* task) {
+  struct event_t* event = bpf_ringbuf_reserve(&rb, sizeof(struct event_t), 0);
+  if (event == NULL) {
+    m->ringbuffer_full++;
+    return;
+  }
+
+  process_fill(&event->process, task, false);
+
+  __submit_event(event, m, PROCESS_EXEC);
+}

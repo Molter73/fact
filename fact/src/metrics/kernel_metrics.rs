@@ -14,6 +14,7 @@ pub struct KernelMetrics {
     path_chown: EventCounter,
     path_rename: EventCounter,
     sched_fork: EventCounter,
+    sched_exec: EventCounter,
     map: PerCpuArray<MapData, metrics_t>,
 }
 
@@ -49,6 +50,11 @@ impl KernelMetrics {
             "Events processed by the sched_fork tracepoint",
             &[], // Labels are not needed since `collect` will add them all
         );
+        let sched_exec = EventCounter::new(
+            "kernel_sched_exec_events",
+            "Events processed by the sched_exec tracepoint",
+            &[], // Labels are not needed since `collect` will add them all
+        );
 
         file_open.register(reg);
         path_unlink.register(reg);
@@ -56,6 +62,7 @@ impl KernelMetrics {
         path_chown.register(reg);
         path_rename.register(reg);
         sched_fork.register(reg);
+        sched_exec.register(reg);
 
         KernelMetrics {
             file_open,
@@ -64,6 +71,7 @@ impl KernelMetrics {
             path_chown,
             path_rename,
             sched_fork,
+            sched_exec,
             map: kernel_metrics,
         }
     }
@@ -114,6 +122,7 @@ impl KernelMetrics {
         KernelMetrics::refresh_labels(&self.path_chown, &metrics.path_chown);
         KernelMetrics::refresh_labels(&self.path_rename, &metrics.path_rename);
         KernelMetrics::refresh_labels(&self.sched_fork, &metrics.sched_fork);
+        KernelMetrics::refresh_labels(&self.sched_exec, &metrics.sched_exec);
 
         Ok(())
     }

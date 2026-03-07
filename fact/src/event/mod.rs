@@ -321,6 +321,11 @@ impl TryFrom<&event_t> for EventData {
                 let data = ProcessForkData { parent, child };
                 EventData::Process(ProcessData::Fork(data))
             }
+            file_activity_type_t::PROCESS_EXEC => {
+                let proc = Process::try_from(value.process)?;
+                let data = ProcessExecData(proc);
+                EventData::Process(ProcessData::Exec(data))
+            }
             _ => unreachable!(),
         };
 
@@ -551,6 +556,7 @@ impl PartialEq for RenameFileData {
 #[derive(Debug, Clone, Serialize)]
 pub enum ProcessData {
     Fork(ProcessForkData),
+    Exec(ProcessExecData),
 }
 
 #[cfg(test)]
@@ -558,6 +564,8 @@ impl PartialEq for ProcessData {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Fork(left), Self::Fork(right)) => left == right,
+            (Self::Exec(left), Self::Exec(right)) => left == right,
+            (_, _) => false,
         }
     }
 }
@@ -566,6 +574,9 @@ impl From<ProcessData> for fact_api::process_activity::Process {
     fn from(value: ProcessData) -> Self {
         match value {
             ProcessData::Fork(data) => fact_api::process_activity::Process::Fork(data.into()),
+            ProcessData::Exec(ProcessExecData(proc)) => {
+                fact_api::process_activity::Process::Exec(proc.into())
+            }
         }
     }
 }
@@ -589,6 +600,22 @@ impl From<ProcessForkData> for fact_api::ProcessFork {
             parent: Some(parent.into()),
             child: Some(child.into()),
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProcessExecData(Process);
+
+#[cfg(test)]
+impl PartialEq for ProcessExecData {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl From<ProcessExecData> for fact_api::Process {
+    fn from(ProcessExecData(proc): ProcessExecData) -> Self {
+        proc.into()
     }
 }
 

@@ -268,3 +268,16 @@ int BPF_PROG(trace_sched_process_fork, struct task_struct* parent, struct task_s
   submit_fork_event(&m->sched_fork, parent, child);
   return 0;
 }
+
+SEC("tp_btf/sched_process_exec")
+int BPF_PROG(trace_sched_process_exec, struct task_struct* task, pid_t old_pid, struct linux_binprm* bprm) {
+  struct metrics_t* m = get_metrics();
+  if (m == NULL) {
+    return 0;
+  }
+
+  m->sched_exec.total++;
+
+  submit_exec_event(&m->sched_fork, task);
+  return 0;
+}

@@ -57,6 +57,7 @@ typedef enum file_activity_type_t {
   FILE_ACTIVITY_CHOWN,
   FILE_ACTIVITY_RENAME,
   PROCESS_FORK,
+  PROCESS_EXEC,
 } file_activity_type_t;
 
 struct event_t {
@@ -116,4 +117,5 @@ struct metrics_t {
   struct metrics_by_hook_t path_chown;
   struct metrics_by_hook_t path_rename;
   struct metrics_by_hook_t sched_fork;
+  struct metrics_by_hook_t sched_exec;
 };

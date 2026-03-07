@@ -115,6 +115,7 @@ impl metrics_t {
         m.path_chown = m.path_chown.accumulate(&other.path_chown);
         m.path_rename = m.path_rename.accumulate(&other.path_rename);
         m.sched_fork = m.sched_fork.accumulate(&other.sched_fork);
+        m.sched_exec = m.sched_exec.accumulate(&other.sched_exec);
         m
     }
 }
