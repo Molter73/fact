@@ -3,9 +3,14 @@ resolver = "2"
 members = [
     "fact",
     "fact-api",
+    "fact-compendium",
+    "fact-core",
     "fact-ebpf",
 ]
-default-members = ["fact"]
+default-members = [
+    "fact",
+    "fact-compendium",
+]
 
 [workspace.package]
 license = "MIT OR Apache-2.0"

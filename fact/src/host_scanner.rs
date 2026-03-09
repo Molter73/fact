@@ -27,14 +27,16 @@ use std::{
 
 use anyhow::Context;
 use aya::maps::MapData;
-use fact_ebpf::{inode_key_t, inode_value_t};
 use log::{debug, info, warn};
 use tokio::{
     sync::{broadcast, mpsc, watch},
     task::JoinHandle,
 };
 
-use crate::{bpf::Bpf, event::Event, host_info};
+use fact_core::{event::Event, host_info};
+use fact_ebpf::{inode_key_t, inode_value_t};
+
+use crate::bpf::Bpf;
 
 pub struct HostScanner {
     kernel_inode_map: RefCell<aya::maps::HashMap<MapData, inode_key_t, inode_value_t>>,

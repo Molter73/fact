@@ -1,0 +1,17 @@
+[package]
+name = "fact-compendium"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+mongodb = "3.5.1"
+tonic = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+
+fact-api = { path = "../fact-api/" }
+fact-core = { path = "../fact-core/" }

@@ -16,8 +16,9 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::{config::ProcessConfig, event::Event, host_info, metrics::EventCounter};
+use crate::{config::ProcessConfig, metrics::EventCounter};
 
+use fact_core::{event::Event, host_info};
 use fact_ebpf::{
     event_t, inode_key_t, inode_value_t, metrics_t, path_prefix_t, process_t, LPM_SIZE_MAX,
 };
@@ -308,10 +309,13 @@ mod bpf_tests {
     use tempfile::NamedTempFile;
     use tokio::{sync::watch, time::timeout};
 
-    use crate::{
-        config::{reloader::Reloader, FactConfig},
+    use fact_core::{
         event::{process::Process, EventTestData},
         host_info,
+    };
+
+    use crate::{
+        config::{reloader::Reloader, FactConfig},
         metrics::exporter::Exporter,
     };
 
@@ -322,7 +326,7 @@ mod bpf_tests {
         if let Ok(value) = std::env::var("FACT_LOGLEVEL") {
             let value = value.to_lowercase();
             if value == "debug" || value == "trace" {
-                crate::init_log().unwrap();
+                fact_core::init_log().unwrap();
             }
         }
 

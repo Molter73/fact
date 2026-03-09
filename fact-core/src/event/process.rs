@@ -29,11 +29,24 @@ impl TryFrom<&lineage_t> for Lineage {
 }
 
 impl From<Lineage> for fact_api::process::LineageInfo {
-    fn from(value: Lineage) -> Self {
-        let Lineage { uid, exe_path } = value;
+    fn from(Lineage { uid, exe_path }: Lineage) -> Self {
         Self {
             parent_uid: uid,
             parent_exec_file_path: exe_path.to_string_lossy().to_string(),
+        }
+    }
+}
+
+impl From<fact_api::process::LineageInfo> for Lineage {
+    fn from(
+        fact_api::process::LineageInfo {
+            parent_uid,
+            parent_exec_file_path,
+        }: fact_api::process::LineageInfo,
+    ) -> Self {
+        Lineage {
+            uid: parent_uid,
+            exe_path: parent_exec_file_path.into(),
         }
     }
 }
@@ -57,7 +70,6 @@ pub struct Process {
 impl Process {
     /// Create a representation of the current process as best as
     /// possible.
-    #[cfg(test)]
     pub fn current() -> Self {
         use crate::host_info::{get_host_mount_ns, get_mount_ns};
 
@@ -116,7 +128,6 @@ impl Process {
     }
 }
 
-#[cfg(test)]
 impl PartialEq for Process {
     fn eq(&self, other: &Self) -> bool {
         self.uid == other.uid
@@ -179,8 +190,8 @@ impl TryFrom<process_t> for Process {
 }
 
 impl From<Process> for fact_api::Process {
-    fn from(value: Process) -> Self {
-        let Process {
+    fn from(
+        Process {
             comm,
             args,
             exe_path,
@@ -193,8 +204,8 @@ impl From<Process> for fact_api::Process {
             upid: _,
             in_root_mount_ns,
             lineage,
-        } = value;
-
+        }: Process,
+    ) -> Self {
         let container_id = container_id.unwrap_or("".to_string());
 
         // try_join can fail if args contain nul bytes, though this should not happen
@@ -225,6 +236,45 @@ impl From<Process> for fact_api::Process {
     }
 }
 
+impl From<fact_api::Process> for Process {
+    fn from(
+        fact_api::Process {
+            container_id,
+            name,
+            args,
+            exec_file_path,
+            pid,
+            uid,
+            gid,
+            lineage_info,
+            login_uid,
+            in_root_mount_ns,
+            ..
+        }: fact_api::Process,
+    ) -> Self {
+        let args = shlex::split(&args).unwrap();
+        let container_id = if !container_id.is_empty() {
+            Some(container_id)
+        } else {
+            None
+        };
+        Process {
+            comm: name,
+            args,
+            exe_path: exec_file_path.into(),
+            container_id,
+            uid,
+            username: "",
+            gid,
+            login_uid,
+            pid,
+            upid: 0,
+            in_root_mount_ns,
+            lineage: lineage_info.into_iter().map(Lineage::from).collect(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -249,16 +299,16 @@ mod tests {
                 Some("2bc55a8cae17".to_string()),
             ),
             (
-              "/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-podce705797_e47e_11e9_bd71_42010a000002.slice/docker-6525e65814a99d431b6978e8f8c895013176c6c58173b56639d4b020c14e6022.scope",
-              Some("6525e65814a9".to_string()),
+                "/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-podce705797_e47e_11e9_bd71_42010a000002.slice/docker-6525e65814a99d431b6978e8f8c895013176c6c58173b56639d4b020c14e6022.scope",
+                Some("6525e65814a9".to_string()),
             ),
             (
                 "/machine.slice/libpod-b6e375cfe46efa5cd90d095603dec2de888c28b203285819233040b5cf1212ac.scope/container",
                 Some("b6e375cfe46e".to_string()),
             ),
             (
-              "/machine.slice/libpod-cbdfa0f1f08763b1963c30d98e11e1f052cb67f1e9b7c0ab8a6ca6c70cbcad69.scope/container/kubelet.slice/kubelet-kubepods.slice/kubelet-kubepods-besteffort.slice/kubelet-kubepods-besteffort-pod6eab3b7b_f0a6_4bb8_bff2_d5bc9017c04b.slice/cri-containerd-5ebf11e02dbde102cda4b76bc0e3849a65f9edac7a12bdabfd34db01b9556101.scope",
-              Some("5ebf11e02dbd".to_string()),
+                "/machine.slice/libpod-cbdfa0f1f08763b1963c30d98e11e1f052cb67f1e9b7c0ab8a6ca6c70cbcad69.scope/container/kubelet.slice/kubelet-kubepods.slice/kubelet-kubepods-besteffort.slice/kubelet-kubepods-besteffort-pod6eab3b7b_f0a6_4bb8_bff2_d5bc9017c04b.slice/cri-containerd-5ebf11e02dbde102cda4b76bc0e3849a65f9edac7a12bdabfd34db01b9556101.scope",
+                Some("5ebf11e02dbd".to_string()),
             ),
         ];
 

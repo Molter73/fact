@@ -6,7 +6,9 @@ use tokio::sync::{
     watch,
 };
 
-use crate::{event::Event, metrics::EventCounter};
+use fact_core::event::Event;
+
+use crate::metrics::EventCounter;
 
 pub struct Client {
     rx: broadcast::Receiver<Arc<Event>>,

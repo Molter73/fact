@@ -22,10 +22,11 @@ FROM builder AS build
 ARG FACT_VERSION
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/app/target \
-    cargo build --release && \
-    cp target/release/fact fact
+    cargo build --bins --release && \
+    cp target/release/fact fact && \
+    cp target/release/fact-compendium fact-compendium
 
-FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest AS fact
 
 ARG FACT_VERSION
 LABEL name="fact" \
@@ -47,3 +48,13 @@ COPY --from=build /app/fact /usr/local/bin
 COPY LICENSE-APACHE LICENSE-MIT LICENSE-GPL2 /licenses/
 
 ENTRYPOINT ["fact"]
+
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest AS fact-compendium
+
+COPY --from=build /app/fact-compendium /usr/local/bin
+
+COPY LICENSE-APACHE LICENSE-MIT LICENSE-GPL2 /licenses/
+
+EXPOSE 8080
+
+ENTRYPOINT ["fact-compendium"]

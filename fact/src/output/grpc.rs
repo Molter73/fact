@@ -1,7 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::{bail, Context};
-use fact_api::file_activity_service_client::FileActivityServiceClient;
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
 use log::{debug, info, warn};
@@ -18,7 +17,10 @@ use tokio_stream::{
 };
 use tonic::transport::Channel;
 
-use crate::{config::GrpcConfig, event::Event, metrics::EventCounter};
+use fact_api::fact_service_client::FactServiceClient;
+use fact_core::event::Event;
+
+use crate::{config::GrpcConfig, metrics::EventCounter};
 
 pub struct Client {
     rx: broadcast::Receiver<Arc<Event>>,
@@ -134,7 +136,7 @@ impl Client {
             };
             info!("Successfully connected to gRPC server");
 
-            let mut client = FileActivityServiceClient::new(channel);
+            let mut client = FactServiceClient::new(channel);
 
             let metrics = self.metrics.clone();
             let rx =

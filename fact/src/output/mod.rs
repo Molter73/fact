@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use tokio::sync::{broadcast, watch};
 
-use crate::{config::GrpcConfig, event::Event, metrics::OutputMetrics};
+use fact_core::event::Event;
+
+use crate::{config::GrpcConfig, metrics::OutputMetrics};
 
 mod grpc;
 mod stdout;

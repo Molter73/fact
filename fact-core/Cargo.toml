@@ -1,0 +1,21 @@
+[package]
+name = "fact-core"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+env_logger = { workspace = true }
+libc = { workspace = true }
+log = { workspace = true }
+prost-types = { workspace = true }
+serde = { workspace = true }
+shlex = { workspace = true }
+uuid = { workspace = true }
+
+fact-api = { path = "../fact-api/" }
+fact-ebpf = { path = "../fact-ebpf/" }
+
+[dev-dependencies]
+regex = { workspace = true }

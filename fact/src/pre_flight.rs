@@ -2,7 +2,7 @@ use std::fs::read_to_string;
 
 use anyhow::{bail, Context};
 
-use crate::host_info::get_host_mount;
+use fact_core::host_info::get_host_mount;
 
 fn have_bpf_lsm_inner(lsm_config: &str) -> anyhow::Result<()> {
     if !lsm_config.split(',').any(|cap| cap == "bpf") {
