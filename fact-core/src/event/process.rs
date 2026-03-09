@@ -33,8 +33,7 @@ impl TryFrom<&lineage_t> for Lineage {
 }
 
 impl From<Lineage> for fact_api::process::LineageInfo {
-    fn from(value: Lineage) -> Self {
-        let Lineage { uid, exe_path } = value;
+    fn from(Lineage { uid, exe_path }: Lineage) -> Self {
         Self {
             parent_uid: uid,
             parent_exec_file_path: exe_path.to_string_lossy().to_string(),
@@ -52,6 +51,20 @@ impl From<Lineage> for opentelemetry::logs::AnyValue {
                 value.exe_path.to_string_lossy().to_string().into(),
             ),
         ])))
+    }
+}
+
+impl From<fact_api::process::LineageInfo> for Lineage {
+    fn from(
+        fact_api::process::LineageInfo {
+            parent_uid,
+            parent_exec_file_path,
+        }: fact_api::process::LineageInfo,
+    ) -> Self {
+        Lineage {
+            uid: parent_uid,
+            exe_path: parent_exec_file_path.into(),
+        }
     }
 }
 
@@ -75,7 +88,6 @@ pub struct Process {
 impl Process {
     /// Create a representation of the current process as best as
     /// possible.
-    #[cfg(test)]
     pub fn current() -> Self {
         use crate::host_info::{get_host_mount_ns, get_mount_ns};
 
@@ -134,7 +146,6 @@ impl Process {
     }
 }
 
-#[cfg(test)]
 impl PartialEq for Process {
     fn eq(&self, other: &Self) -> bool {
         self.uid == other.uid
@@ -197,8 +208,8 @@ impl TryFrom<process_t> for Process {
 }
 
 impl From<Process> for fact_api::Process {
-    fn from(value: Process) -> Self {
-        let Process {
+    fn from(
+        Process {
             comm,
             args,
             exe_path,
@@ -211,8 +222,8 @@ impl From<Process> for fact_api::Process {
             upid: _,
             in_root_mount_ns,
             lineage,
-        } = value;
-
+        }: Process,
+    ) -> Self {
         let container_id = container_id.unwrap_or("".to_string());
 
         // try_join can fail if args contain nul bytes, though this should not happen
@@ -279,6 +290,45 @@ impl From<Process> for opentelemetry::logs::AnyValue {
         }
 
         AnyValue::Map(Box::new(map))
+    }
+}
+
+impl From<fact_api::Process> for Process {
+    fn from(
+        fact_api::Process {
+            container_id,
+            name,
+            args,
+            exec_file_path,
+            pid,
+            uid,
+            gid,
+            lineage_info,
+            login_uid,
+            in_root_mount_ns,
+            ..
+        }: fact_api::Process,
+    ) -> Self {
+        let args = shlex::split(&args).unwrap();
+        let container_id = if !container_id.is_empty() {
+            Some(container_id)
+        } else {
+            None
+        };
+        Process {
+            comm: name,
+            args,
+            exe_path: exec_file_path.into(),
+            container_id,
+            uid,
+            username: "",
+            gid,
+            login_uid,
+            pid,
+            upid: 0,
+            in_root_mount_ns,
+            lineage: lineage_info.into_iter().map(Lineage::from).collect(),
+        }
     }
 }
 

@@ -11,12 +11,11 @@ use std::{
 
 use anyhow::{Context, bail};
 use clap::Parser;
+use fact_core::host_info;
 use globset::{Glob, GlobSet};
 use log::{info, warn};
 use serde::{Serialize, Serializer, ser::SerializeSeq};
 use yaml_rust2::{Yaml, YamlLoader, yaml};
-
-use crate::host_info;
 
 pub mod reloader;
 #[cfg(test)]

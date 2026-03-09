@@ -2,7 +2,6 @@ use std::{io::Write, path::PathBuf, str::FromStr, time::Duration};
 
 use anyhow::{Context, Result};
 use bpf::Bpf;
-use host_info::{SystemInfo, get_distro, get_hostname};
 use host_scanner::HostScanner;
 use log::{LevelFilter, debug, info, warn};
 use metrics::exporter::Exporter;
@@ -14,11 +13,14 @@ use tokio::{
     time::timeout,
 };
 
+use fact_core::{
+    event::Event,
+    host_info::{SystemInfo, get_distro, get_hostname},
+};
+
 mod bpf;
 pub mod config;
 mod endpoints;
-mod event;
-mod host_info;
 mod host_scanner;
 mod metrics;
 mod output;
@@ -31,7 +33,6 @@ use pre_flight::pre_flight;
 
 use crate::{
     config::BpfConfig,
-    event::Event,
     metrics::{Metrics, kernel_metrics::KernelMetrics},
 };
 

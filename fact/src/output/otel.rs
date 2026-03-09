@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::bail;
+use fact_core::event::{EventData, ProcessData};
 use log::{debug, info, warn};
 use opentelemetry::logs::{AnyValue, LogRecord, Logger, LoggerProvider, Severity};
 use opentelemetry_otlp::{LogExporter, WithExportConfig};
@@ -11,12 +12,7 @@ use tokio::{
     task::JoinSet,
 };
 
-use crate::{
-    config::OTelConfig,
-    event::{EventData, ProcessData},
-    metrics::EventCounter,
-    output::EventReceiver,
-};
+use crate::{config::OTelConfig, metrics::EventCounter, output::EventReceiver};
 
 pub(super) struct Client {
     subscriber: mpsc::Sender<oneshot::Sender<EventReceiver>>,

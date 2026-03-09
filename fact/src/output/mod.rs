@@ -8,10 +8,11 @@ use tokio::{
 
 use crate::{
     config::{GrpcConfig, OTelConfig},
-    event::Event,
     flatten_task_result, join_all_tasks,
     metrics::OutputMetrics,
 };
+use fact_core::event::Event;
+
 
 mod grpc;
 #[cfg(feature = "otel")]

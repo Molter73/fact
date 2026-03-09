@@ -37,8 +37,8 @@ jobs:
     - name: Check code format
       run: make format-check
     - name: Build
-      run: cargo +${{ matrix.rust-version }} build
+      run: cargo +${{ matrix.rust-version }} build --bins
     - name: Lint
       run: cargo +${{ matrix.rust-version }} clippy -- -D warnings
     - name: Test
-      run: cargo +${{ matrix.rust-version }} test --all-features
+      run: cargo +${{ matrix.rust-version }} test --all-features --all

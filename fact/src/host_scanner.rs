@@ -35,6 +35,10 @@ use aya::{
     maps::{MapData, MapError},
     sys::SyscallError,
 };
+use fact_core::{
+    event::Event,
+    host_info::{self, remove_host_mount},
+};
 use fact_ebpf::{inode_key_t, inode_value_t, monitored_t};
 use log::{debug, info, warn};
 use serde::{Serialize, ser::SerializeMap};
@@ -47,8 +51,6 @@ use tokio::{
 use crate::{
     bpf::Bpf,
     config::PathsConfig,
-    event::Event,
-    host_info::{self, remove_host_mount},
     metrics::host_scanner::{HostScannerLabels, HostScannerMetrics, ScanLabels},
 };
 

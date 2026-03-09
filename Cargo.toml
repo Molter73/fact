@@ -3,9 +3,14 @@ resolver = "2"
 members = [
     "fact",
     "fact-api",
+    "fact-compendium",
+    "fact-core",
     "fact-ebpf",
 ]
-default-members = ["fact"]
+default-members = [
+    "fact",
+    "fact-compendium",
+]
 
 [workspace.package]
 license = "MIT OR Apache-2.0"
@@ -14,9 +19,17 @@ license = "MIT OR Apache-2.0"
 anyhow = { version = "1", default-features = false, features = ["std", "backtrace"] }
 aya = { git = "https://github.com/aya-rs/aya.git", rev = "c29cd71cb4fe1440bc0d566633afa822f1b41fc5", default-features = false }
 libc = { version = "0.2.159", default-features = false }
+env_logger = { version = "0.11.5", default-features = false, features = ["humantime"] }
+globset = "0.4.18"
+log = { version = "0.4.22", default-features = false }
+opentelemetry = { version = "0.32.0" }
+opentelemetry-otlp = { version = "0.32.0" }
+opentelemetry_sdk = { version = "0.32.1", features = [ "logs"] }
 prost = "0.14.0"
 prost-types = "0.14.0"
 serde = { version = "1.0.219", features = ["derive"] }
+regex = "1.11.1"
+shlex = "2.0.1"
 tokio = { version = "1.40.0", default-features = false, features = [
     "fs",
     "macros",
@@ -25,7 +38,9 @@ tokio = { version = "1.40.0", default-features = false, features = [
     "net",
     "signal",
 ] }
+tokio-stream = { version = "0.1.17", features = ["sync"] }
 tonic = { version = "0.14.0" }
+uuid = { version = "1.17.0", features = ["v4"] }
 
 [profile.release]
 debug = "line-tables-only"

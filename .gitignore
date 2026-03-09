@@ -32,3 +32,6 @@ compile_commands.json
 
 # Object files (generated from manually running clang)
 *.o
+
+# Env files
+.env

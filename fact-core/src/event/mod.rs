@@ -1,7 +1,5 @@
 #[cfg(feature = "otel")]
 use std::collections::HashMap;
-#[cfg(all(test, feature = "bpf-test"))]
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     ffi::{CStr, OsStr},
     os::{raw::c_char, unix::ffi::OsStrExt},
@@ -22,7 +20,7 @@ use fact_ebpf::{
 use crate::host_info;
 use process::Process;
 
-pub(crate) mod process;
+pub mod process;
 
 fn slice_to_string(s: &[c_char]) -> anyhow::Result<String> {
     Ok(unsafe { CStr::from_ptr(s.as_ptr()) }.to_str()?.to_owned())
@@ -67,9 +65,13 @@ fn timestamp_to_proto(ts: u64) -> prost_types::Timestamp {
     prost_types::Timestamp { seconds, nanos }
 }
 
+fn proto_to_timestamp(prost_types::Timestamp { seconds, nanos }: prost_types::Timestamp) -> u64 {
+    (seconds * 1_000_000_000) as u64 + nanos as u64
+}
+
 #[cfg(all(test, feature = "bpf-test"))]
 #[derive(Debug)]
-pub(crate) enum EventTestData {
+pub enum EventTestData {
     Creation,
     Unlink,
     Chmod(u16, u16),
@@ -79,8 +81,7 @@ pub(crate) enum EventTestData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
     timestamp: u64,
-    #[serde(skip_deserializing)]
-    hostname: &'static str,
+    hostname: String,
     pub data: EventData,
 }
 
@@ -128,7 +129,7 @@ impl Event {
 
         Ok(Event {
             timestamp,
-            hostname,
+            hostname: hostname.to_string(),
             data,
         })
     }
@@ -432,7 +433,7 @@ impl Event {
     }
 
     #[cfg(feature = "otel")]
-    pub(crate) fn event_type(&self) -> &'static str {
+    pub fn event_type(&self) -> &'static str {
         use EventData::*;
         match &self.data {
             File { file, .. } => file.event_type(),
@@ -440,6 +441,14 @@ impl Event {
             Process(ProcessData::Exec(_)) => "exec",
             Process(ProcessData::Proc(_)) => "proc",
         }
+    }
+
+    pub fn is_file_event(&self) -> bool {
+        matches!(self.data, EventData::File { .. })
+    }
+
+    pub fn is_process_event(&self) -> bool {
+        matches!(self.data, EventData::Process(_))
     }
 }
 
@@ -452,7 +461,7 @@ impl TryFrom<&event_t> for Event {
 
         Ok(Event {
             timestamp,
-            hostname: host_info::get_hostname(),
+            hostname: host_info::get_hostname().to_string(),
             data,
         })
     }
@@ -467,7 +476,7 @@ impl TryFrom<&process_t> for Event {
 
         Ok(Event {
             timestamp,
-            hostname: host_info::get_hostname(),
+            hostname: host_info::get_hostname().to_string(),
             data,
         })
     }
@@ -476,26 +485,29 @@ impl TryFrom<&process_t> for Event {
 impl From<Event> for fact_api::FactMsg {
     fn from(value: Event) -> Self {
         let timestamp = timestamp_to_proto(value.timestamp);
-        let msg = match value.data {
-            EventData::File { file, process } => {
-                let activity = fact_api::FileActivity {
-                    file: Some(file.into()),
-                    process: Some(process.into()),
-                };
-                Some(fact_api::fact_msg::Msg::File(activity))
-            }
-            EventData::Process(data) => {
-                let activity = fact_api::ProcessActivity {
-                    process: Some(data.into()),
-                };
-                Some(fact_api::fact_msg::Msg::Process(activity))
-            }
-        };
-
         Self {
             timestamp: Some(timestamp),
             hostname: value.hostname.to_string(),
+            msg: Some(value.data.into()),
+        }
+    }
+}
+
+impl From<fact_api::FactMsg> for Event {
+    fn from(
+        fact_api::FactMsg {
+            timestamp,
+            hostname,
             msg,
+        }: fact_api::FactMsg,
+    ) -> Self {
+        match msg {
+            Some(data) => Event {
+                timestamp: proto_to_timestamp(timestamp.expect("Empty timestamp received")),
+                hostname,
+                data: data.into(),
+            },
+            None => unreachable!(),
         }
     }
 }
@@ -527,7 +539,6 @@ impl From<Event> for opentelemetry::logs::AnyValue {
     }
 }
 
-#[cfg(test)]
 impl PartialEq for Event {
     fn eq(&self, other: &Self) -> bool {
         self.hostname == other.hostname && self.data == other.data
@@ -540,7 +551,6 @@ pub enum EventData {
     Process(ProcessData),
 }
 
-#[cfg(test)]
 impl PartialEq for EventData {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -617,6 +627,44 @@ impl TryFrom<process_t> for EventData {
     fn try_from(value: process_t) -> Result<Self, Self::Error> {
         let proc = Process::try_from(value)?;
         Ok(EventData::Process(ProcessData::Proc(proc)))
+    }
+}
+
+impl From<EventData> for fact_api::fact_msg::Msg {
+    fn from(value: EventData) -> Self {
+        match value {
+            EventData::File { file, process } => {
+                let activity = fact_api::FileActivity {
+                    file: Some(file.into()),
+                    process: Some(process.into()),
+                };
+                fact_api::fact_msg::Msg::File(activity)
+            }
+            EventData::Process(data) => {
+                let activity = fact_api::ProcessActivity {
+                    process: Some(data.into()),
+                };
+                fact_api::fact_msg::Msg::Process(activity)
+            }
+        }
+    }
+}
+
+impl From<fact_api::fact_msg::Msg> for EventData {
+    fn from(value: fact_api::fact_msg::Msg) -> Self {
+        match value {
+            fact_api::fact_msg::Msg::File(fact_api::FileActivity {
+                process: Some(proc),
+                file: Some(file),
+            }) => EventData::File {
+                process: proc.into(),
+                file: file.into(),
+            },
+            fact_api::fact_msg::Msg::Process(fact_api::ProcessActivity {
+                process: Some(proc),
+            }) => EventData::Process(proc.into()),
+            _ => unreachable!("Invalid protobuf received"),
+        }
     }
 }
 
@@ -912,7 +960,50 @@ impl From<FileData> for opentelemetry::logs::AnyValue {
     }
 }
 
-#[cfg(test)]
+impl From<fact_api::file_activity::File> for FileData {
+    fn from(value: fact_api::file_activity::File) -> Self {
+        match value {
+            fact_api::file_activity::File::Creation(fact_api::FileCreation {
+                activity: Some(data),
+            }) => FileData::Creation(data.into()),
+            fact_api::file_activity::File::Open(fact_api::FileOpen {
+                activity: Some(data),
+            }) => FileData::Open(data.into()),
+            fact_api::file_activity::File::Unlink(fact_api::FileUnlink {
+                activity: Some(data),
+            }) => FileData::Unlink(data.into()),
+            fact_api::file_activity::File::Permission(fact_api::FilePermissionChange {
+                activity: Some(data),
+                mode,
+            }) => FileData::Chmod(ChmodFileData {
+                inner: data.into(),
+                new_mode: mode as u16,
+                old_mode: 0,
+            }),
+            fact_api::file_activity::File::Ownership(fact_api::FileOwnershipChange {
+                activity: Some(data),
+                uid,
+                gid,
+                ..
+            }) => FileData::Chown(ChownFileData {
+                inner: data.into(),
+                new_uid: uid,
+                new_gid: gid,
+                old_uid: 0,
+                old_gid: 0,
+            }),
+            fact_api::file_activity::File::Rename(fact_api::FileRename {
+                old: Some(old),
+                new: Some(new),
+            }) => FileData::Rename {
+                new: new.into(),
+                old: old.into(),
+            },
+            _ => unreachable!(),
+        }
+    }
+}
+
 impl PartialEq for FileData {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -971,7 +1062,6 @@ impl BaseFileData {
     }
 }
 
-#[cfg(test)]
 impl PartialEq for BaseFileData {
     fn eq(&self, other: &Self) -> bool {
         self.filename == other.filename && self.host_file == other.host_file
@@ -1000,6 +1090,16 @@ impl From<BaseFileData> for opentelemetry::logs::AnyValue {
                 value.host_file.to_string_lossy().to_string().into(),
             ),
         ])))
+    }
+}
+
+impl From<fact_api::FileActivityBase> for BaseFileData {
+    fn from(fact_api::FileActivityBase { path, host_path }: fact_api::FileActivityBase) -> Self {
+        BaseFileData {
+            filename: path.into(),
+            host_file: host_path.into(),
+            ..Default::default()
+        }
     }
 }
 
@@ -1040,7 +1140,6 @@ impl From<ChmodFileData> for opentelemetry::logs::AnyValue {
     }
 }
 
-#[cfg(test)]
 impl PartialEq for ChmodFileData {
     fn eq(&self, other: &Self) -> bool {
         self.new_mode == other.new_mode
@@ -1058,7 +1157,6 @@ pub struct ChownFileData {
     old_gid: u32,
 }
 
-#[cfg(test)]
 impl PartialEq for ChownFileData {
     fn eq(&self, other: &Self) -> bool {
         self.new_uid == other.new_uid
@@ -1299,7 +1397,6 @@ impl From<XattrFileData> for opentelemetry::logs::AnyValue {
     }
 }
 
-#[cfg(test)]
 impl PartialEq for XattrFileData {
     fn eq(&self, other: &Self) -> bool {
         self.xattr_name == other.xattr_name && self.inner == other.inner
@@ -1313,7 +1410,6 @@ pub enum ProcessData {
     Proc(Process),
 }
 
-#[cfg(test)]
 impl PartialEq for ProcessData {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -1337,13 +1433,22 @@ impl From<ProcessData> for fact_api::process_activity::Process {
     }
 }
 
+impl From<fact_api::process_activity::Process> for ProcessData {
+    fn from(value: fact_api::process_activity::Process) -> Self {
+        match value {
+            fact_api::process_activity::Process::Fork(data) => ProcessData::Fork(data.into()),
+            fact_api::process_activity::Process::Exec(process) => ProcessData::Exec(process.into()),
+            fact_api::process_activity::Process::Proc(process) => ProcessData::Proc(process.into()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessForkData {
     parent: Process,
     child: Process,
 }
 
-#[cfg(test)]
 impl PartialEq for ProcessForkData {
     fn eq(&self, other: &Self) -> bool {
         self.parent == other.parent && self.child == other.child
@@ -1359,10 +1464,24 @@ impl From<ProcessForkData> for fact_api::ProcessFork {
     }
 }
 
+impl From<fact_api::ProcessFork> for ProcessForkData {
+    fn from(value: fact_api::ProcessFork) -> Self {
+        match value {
+            fact_api::ProcessFork {
+                parent: Some(parent),
+                child: Some(child),
+            } => ProcessForkData {
+                parent: parent.into(),
+                child: child.into(),
+            },
+            _ => unreachable!("Invalid process fork message received"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessExecData(Process);
 
-#[cfg(test)]
 impl PartialEq for ProcessExecData {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
@@ -1372,6 +1491,12 @@ impl PartialEq for ProcessExecData {
 impl From<ProcessExecData> for fact_api::Process {
     fn from(ProcessExecData(proc): ProcessExecData) -> Self {
         proc.into()
+    }
+}
+
+impl From<fact_api::Process> for ProcessExecData {
+    fn from(proc: fact_api::Process) -> Self {
+        ProcessExecData(proc.into())
     }
 }
 

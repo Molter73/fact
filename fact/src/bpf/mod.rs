@@ -18,11 +18,10 @@ use tokio::{
 
 use crate::{
     config::{BpfConfig, PathsConfig, ProcessConfig},
-    event::Event,
-    host_info,
     metrics::EventCounter,
 };
 
+use fact_core::{event::Event, host_info};
 use fact_ebpf::{
     LPM_SIZE_MAX, event_t, inode_key_t, inode_value_t, metrics_t, path_prefix_t, process_t,
 };
@@ -476,7 +475,7 @@ mod bpf_tests {
         if let Ok(value) = std::env::var("FACT_LOGLEVEL") {
             let value = value.to_lowercase();
             if value == "debug" || value == "trace" {
-                crate::init_log().unwrap();
+                fact_core::init_log().unwrap();
             }
         }
 

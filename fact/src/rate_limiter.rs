@@ -1,3 +1,4 @@
+use fact_core::event::Event;
 use governor::{
     Quota,
     clock::DefaultClock,
@@ -10,7 +11,6 @@ use tokio::{
     task::JoinSet,
 };
 
-use crate::event::Event;
 use crate::metrics::EventCounter;
 
 pub struct RateLimiter {

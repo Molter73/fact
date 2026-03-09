@@ -19,6 +19,6 @@ message FactMsg {
   }
 }
 
-service FileActivityService {
+service FactService {
   rpc Communicate(stream FactMsg) returns (google.protobuf.Empty);
 }

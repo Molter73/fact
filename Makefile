@@ -15,6 +15,7 @@ mock-server:
 image:
 	$(DOCKER) build \
 		-f Containerfile \
+		--target fact \
 		--build-arg FACT_VERSION=$(FACT_VERSION) \
 		--build-arg RUST_VERSION=$(RUST_VERSION) \
 		--build-arg CARGO_ARGS="$(CARGO_ARGS)" \
@@ -23,6 +24,18 @@ image:
 
 image-otel: CARGO_ARGS = --features otel
 image-otel: image
+
+compendium:
+	$(DOCKER) build \
+		-f Containerfile \
+		--target fact-compendium \
+		--build-arg FACT_VERSION=$(FACT_VERSION) \
+		--build-arg RUST_VERSION=$(RUST_VERSION) \
+		-t $(FACT_COMPENDIUM_IMAGE_NAME) \
+		$(CURDIR)
+
+images:
+	make image compendium
 
 licenses:THIRD_PARTY_LICENSES.html
 

@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::{Context, bail};
-use fact_api::file_activity_service_client::FileActivityServiceClient;
+use fact_api::fact_service_client::FactServiceClient;
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
 use log::{info, warn};
@@ -232,7 +232,7 @@ impl Client {
             info!("Successfully connected to gRPC server");
             backoff.reset();
 
-            let mut client = FileActivityServiceClient::new(channel);
+            let mut client = FactServiceClient::new(channel);
 
             let metrics = self.metrics.clone();
             let (tx, rx) = oneshot::channel();

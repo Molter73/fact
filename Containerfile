@@ -43,10 +43,11 @@ ARG FACT_VERSION
 ARG CARGO_ARGS=""
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/app/target \
-    cargo build --release $CARGO_ARGS && \
-    cp target/release/fact fact
+    cargo build --bins --release $CARGO_ARGS && \
+    cp target/release/fact fact && \
+    cp target/release/fact-compendium fact-compendium
 
-FROM ubi-micro-base
+FROM ubi-micro-base AS fact
 
 ARG FACT_VERSION
 LABEL name="fact" \
@@ -65,3 +66,13 @@ COPY LICENSE-APACHE LICENSE-MIT LICENSE-GPL2 /licenses/
 RUN update-crypto-policies --set DEFAULT:PQ
 
 ENTRYPOINT ["fact"]
+
+FROM ubi-micro-base AS fact-compendium
+
+COPY --from=build /app/fact-compendium /usr/local/bin
+
+COPY LICENSE-APACHE LICENSE-MIT LICENSE-GPL2 /licenses/
+
+EXPOSE 8080
+
+ENTRYPOINT ["fact-compendium"]

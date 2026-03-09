@@ -1,14 +1,13 @@
 use std::path::Path;
 
 use anyhow::Context;
+use fact_core::event::Event;
 use log::{info, warn};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     sync::{mpsc, watch},
     task::JoinSet,
 };
-
-use crate::event::Event;
 
 pub fn start(
     task_set: &mut JoinSet<anyhow::Result<()>>,
