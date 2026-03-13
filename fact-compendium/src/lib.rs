@@ -1,38 +1,35 @@
-use fact_core::event::Event;
-use log::warn;
-use tokio_stream::StreamExt;
+use std::net::ToSocketAddrs;
 
-#[derive(Debug)]
-pub struct FactServer {
-    pub db_client: mongodb::Client,
-}
+use anyhow::Context;
+use log::info;
+use tonic::transport::Server;
 
-#[tonic::async_trait]
-impl fact_api::fact_service_server::FactService for FactServer {
-    async fn communicate(
-        &self,
-        request: tonic::Request<tonic::Streaming<fact_api::FactMsg>>,
-    ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
-        let mut stream = request.into_inner();
-        while let Some(res) = stream.next().await {
-            match res {
-                Ok(event) => {
-                    let event = Event::from(event);
-                    let db = self.db_client.database("fact");
-                    if event.is_file_event() {
-                        if let Err(e) = db.collection("file").insert_one(event).await {
-                            return Err(tonic::Status::new(tonic::Code::Internal, e.to_string()));
-                        }
-                    } else if let Err(e) = db.collection("process").insert_one(event).await {
-                        return Err(tonic::Status::new(tonic::Code::Internal, e.to_string()));
-                    }
-                }
-                Err(e) => {
-                    warn!("Error: {e:#?}");
-                    break;
-                }
-            }
-        }
-        Ok(tonic::Response::new(()))
-    }
+use crate::{db::FactDb, server::FactServer};
+
+mod db;
+mod server;
+
+pub async fn run() -> anyhow::Result<()> {
+    info!("compendium starting up...");
+
+    let db = FactDb::new().await?;
+    let server = FactServer { db };
+
+    Server::builder()
+        .add_service(fact_api::fact_service_server::FactServiceServer::new(
+            server,
+        ))
+        .serve_with_shutdown(
+            "0.0.0.0:8080"
+                .to_socket_addrs()?
+                .next()
+                .context("No valid socket address found")?,
+            async {
+                let _ = tokio::signal::ctrl_c().await;
+            },
+        )
+        .await?;
+
+    info!("compendium stopping...");
+    Ok(())
 }

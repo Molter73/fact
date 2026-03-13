@@ -288,6 +288,7 @@ impl_metrics_t!(
     path_symlink,
     sched_fork,
     sched_exec,
+    sched_exit,
     iter_task,
 );
 

@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 use std::{ffi::CStr, path::PathBuf};
 
-use fact_ebpf::{lineage_t, process_t};
+use fact_ebpf::process_t;
 #[cfg(feature = "otel")]
 use opentelemetry::logs::AnyValue;
 use serde::{Deserialize, Serialize};
@@ -13,62 +13,6 @@ use crate::host_info;
 use super::{sanitize_d_path, slice_to_string};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct Lineage {
-    uid: u32,
-    exe_path: PathBuf,
-}
-
-impl TryFrom<&lineage_t> for Lineage {
-    type Error = anyhow::Error;
-
-    fn try_from(value: &lineage_t) -> Result<Self, Self::Error> {
-        let lineage_t { uid, exe_path } = value;
-        let exe_path = sanitize_d_path(exe_path);
-
-        Ok(Lineage {
-            uid: *uid,
-            exe_path,
-        })
-    }
-}
-
-impl From<Lineage> for fact_api::process::LineageInfo {
-    fn from(Lineage { uid, exe_path }: Lineage) -> Self {
-        Self {
-            parent_uid: uid,
-            parent_exec_file_path: exe_path.to_string_lossy().to_string(),
-        }
-    }
-}
-
-#[cfg(feature = "otel")]
-impl From<Lineage> for opentelemetry::logs::AnyValue {
-    fn from(value: Lineage) -> Self {
-        AnyValue::Map(Box::new(HashMap::from([
-            ("uid".into(), value.uid.into()),
-            (
-                "exec_path".into(),
-                value.exe_path.to_string_lossy().to_string().into(),
-            ),
-        ])))
-    }
-}
-
-impl From<fact_api::process::LineageInfo> for Lineage {
-    fn from(
-        fact_api::process::LineageInfo {
-            parent_uid,
-            parent_exec_file_path,
-        }: fact_api::process::LineageInfo,
-    ) -> Self {
-        Lineage {
-            uid: parent_uid,
-            exe_path: parent_exec_file_path.into(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Process {
     comm: String,
     args: Vec<String>,
@@ -80,9 +24,9 @@ pub struct Process {
     gid: u32,
     login_uid: u32,
     pid: u32,
-    upid: u64,
+    pub upid: u64,
+    parent_upid: u64,
     in_root_mount_ns: bool,
-    lineage: Vec<Lineage>,
 }
 
 impl Process {
@@ -117,7 +61,7 @@ impl Process {
             pid,
             upid: 0,
             in_root_mount_ns,
-            lineage: vec![],
+            parent_upid: 0,
         }
     }
 
@@ -146,19 +90,6 @@ impl Process {
     }
 }
 
-impl PartialEq for Process {
-    fn eq(&self, other: &Self) -> bool {
-        self.uid == other.uid
-            && self.login_uid == other.login_uid
-            && self.gid == other.gid
-            && self.exe_path == other.exe_path
-            // TODO: task iterator can't read args, so we skip them altogether
-            // && self.args == other.args
-            && self.container_id == other.container_id
-            && self.in_root_mount_ns == other.in_root_mount_ns
-    }
-}
-
 impl TryFrom<process_t> for Process {
     type Error = anyhow::Error;
 
@@ -168,11 +99,6 @@ impl TryFrom<process_t> for Process {
         let memory_cgroup = unsafe { CStr::from_ptr(value.memory_cgroup.as_ptr()) }.to_str()?;
         let container_id = Process::extract_container_id(memory_cgroup);
         let in_root_mount_ns = value.in_root_mount_ns != 0;
-
-        let lineage = value.lineage[..value.lineage_len as usize]
-            .iter()
-            .map(Lineage::try_from)
-            .collect::<Result<Vec<_>, _>>()?;
 
         let mut converted_args = Vec::new();
         let args_len = value.args_len as usize;
@@ -201,8 +127,8 @@ impl TryFrom<process_t> for Process {
             login_uid: value.login_uid,
             pid: value.pid,
             upid: value.upid,
+            parent_upid: value.parent_upid,
             in_root_mount_ns,
-            lineage,
         })
     }
 }
@@ -219,9 +145,9 @@ impl From<Process> for fact_api::Process {
             gid,
             login_uid,
             pid,
-            upid: _,
+            upid,
+            parent_upid,
             in_root_mount_ns,
-            lineage,
         }: Process,
     ) -> Self {
         let container_id = container_id.unwrap_or("".to_string());
@@ -242,11 +168,9 @@ impl From<Process> for fact_api::Process {
             pid,
             uid,
             gid,
+            upid,
+            parent_upid,
             scraped: false,
-            lineage_info: lineage
-                .into_iter()
-                .map(fact_api::process::LineageInfo::from)
-                .collect(),
             login_uid,
             username: username.to_owned(),
             in_root_mount_ns,
@@ -259,12 +183,6 @@ impl From<Process> for opentelemetry::logs::AnyValue {
     fn from(value: Process) -> Self {
         let args = value
             .args
-            .into_iter()
-            .map(AnyValue::from)
-            .collect::<Vec<_>>();
-
-        let lineage = value
-            .lineage
             .into_iter()
             .map(AnyValue::from)
             .collect::<Vec<_>>();
@@ -282,7 +200,6 @@ impl From<Process> for opentelemetry::logs::AnyValue {
             ("login_uid".into(), value.login_uid.into()),
             ("username".into(), value.username.into()),
             ("in_root_mount_ns".into(), value.in_root_mount_ns.into()),
-            ("lineage".into(), AnyValue::ListAny(Box::new(lineage))),
         ]);
 
         if let Some(container_id) = value.container_id {
@@ -303,7 +220,8 @@ impl From<fact_api::Process> for Process {
             pid,
             uid,
             gid,
-            lineage_info,
+            upid,
+            parent_upid,
             login_uid,
             in_root_mount_ns,
             ..
@@ -325,9 +243,9 @@ impl From<fact_api::Process> for Process {
             gid,
             login_uid,
             pid,
-            upid: 0,
+            upid,
+            parent_upid,
             in_root_mount_ns,
-            lineage: lineage_info.into_iter().map(Lineage::from).collect(),
         }
     }
 }
@@ -546,65 +464,5 @@ mod tests {
         };
         let result = Process::try_from(proc);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn process_conversion_valid_utf8_lineage() {
-        let tests = [
-            ("/bin/bash", "ASCII"),
-            ("/usr/bin/тест", "Cyrillic"),
-            ("/opt/应用", "Chinese"),
-        ];
-
-        for (path, description) in tests {
-            let proc = process_t {
-                lineage: [
-                    lineage_t {
-                        uid: 1000,
-                        exe_path: string_to_c_char_array::<{ PATH_MAX as usize }>(path),
-                    },
-                    Default::default(),
-                ],
-                lineage_len: 1,
-                ..Default::default()
-            };
-            let result = Process::try_from(proc).expect("Failed to parse process");
-            let expected_process = Process {
-                lineage: vec![Lineage {
-                    uid: 1000,
-                    exe_path: PathBuf::from(path),
-                }],
-                ..Default::default()
-            };
-            assert_eq!(result, expected_process, "Failed for {}", description);
-        }
-    }
-
-    #[test]
-    fn process_conversion_invalid_utf8_lineage() {
-        use regex::Regex;
-
-        let proc = process_t {
-            lineage: [
-                lineage_t {
-                    uid: 1000,
-                    exe_path: bytes_to_c_char_array::<{ PATH_MAX as usize }>(b"/bin/\xFF\xFE"),
-                },
-                Default::default(),
-            ],
-            lineage_len: 1,
-            ..Default::default()
-        };
-        let result = Process::try_from(proc);
-        assert!(result.is_ok());
-        let lineage = result.unwrap().lineage;
-        let lineage_path_str = lineage[0].exe_path.to_string_lossy();
-
-        let re = Regex::new(r"^/bin/\u{FFFD}+$").expect("Invalid regex pattern");
-        assert!(
-            re.is_match(&lineage_path_str),
-            "Expected pattern '^/bin/\\u{{FFFD}}+$', got '{}'",
-            lineage_path_str
-        );
     }
 }

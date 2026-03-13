@@ -13,18 +13,11 @@
 #define PATH_MAX 4096
 #define TASK_COMM_LEN 16
 
-#define LINEAGE_MAX 2
-
 // Matches Linux kernel XATTR_NAME_MAX (255) + null terminator.
 // https://github.com/torvalds/linux/blob/66affa37cfac0aec061cc4bcf4a065b0c52f7e19/include/uapi/linux/limits.h#L15
 #define XATTR_NAME_MAX_LEN 256
 
 #define LPM_SIZE_MAX 256
-
-typedef struct lineage_t {
-  unsigned int uid;
-  char exe_path[PATH_MAX];
-} lineage_t;
 
 typedef struct process_t {
   char comm[TASK_COMM_LEN];
@@ -36,10 +29,9 @@ typedef struct process_t {
   unsigned int gid;
   unsigned int login_uid;
   unsigned int pid;
-  lineage_t lineage[LINEAGE_MAX];
-  unsigned int lineage_len;
   char in_root_mount_ns;
   unsigned long upid;
+  unsigned long parent_upid;
 } process_t;
 
 typedef struct inode_key_t {
@@ -103,7 +95,7 @@ struct acl_entry_t {
   unsigned int e_id;
 };
 
-typedef enum file_activity_type_t {
+typedef enum fact_event_type_t {
   FILE_ACTIVITY_INIT = -1,
   FILE_ACTIVITY_OPEN = 0,
   FILE_ACTIVITY_CREATION,
@@ -123,7 +115,8 @@ typedef enum file_activity_type_t {
   FILE_ACTIVITY_SYMLINK,
   PROCESS_FORK,
   PROCESS_EXEC,
-} file_activity_type_t;
+  PROCESS_EXIT,
+} fact_event_type_t;
 
 struct event_t {
   unsigned long timestamp;
@@ -132,7 +125,7 @@ struct event_t {
   inode_key_t inode;
   inode_key_t parent_inode;
   monitored_t monitored;
-  file_activity_type_t type;
+  fact_event_type_t type;
   union {
     struct {
       short unsigned int new;
@@ -211,5 +204,6 @@ struct metrics_t {
   struct metrics_by_hook_t path_symlink;
   struct metrics_by_hook_t sched_fork;
   struct metrics_by_hook_t sched_exec;
+  struct metrics_by_hook_t sched_exit;
   struct metrics_by_hook_t iter_task;
 };

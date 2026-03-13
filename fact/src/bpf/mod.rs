@@ -1,4 +1,4 @@
-use std::io;
+use std::{io, sync::Arc, time::Duration};
 
 use anyhow::{Context, bail};
 use aya::{
@@ -8,11 +8,11 @@ use aya::{
 };
 use checks::Checks;
 use libc::c_char;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use tokio::{
     fs::File,
     io::{AsyncReadExt, BufReader, unix::AsyncFd},
-    sync::{mpsc, watch},
+    sync::{Notify, mpsc, watch},
     task::JoinSet,
 };
 
@@ -337,6 +337,7 @@ impl Bpf {
     }
 
     async fn iter_tasks(&mut self) -> anyhow::Result<()> {
+        debug!("Starting task iterator...");
         let prog = self
             .obj
             .program_mut("iter_task")
@@ -366,7 +367,34 @@ impl Bpf {
             }
         }
 
+        debug!("Task iteration done");
         Ok(())
+    }
+
+    /// Periodically notify the BPF worker to send all process
+    /// information.
+    ///
+    /// This is needed because `tokio::time::Interval::tick` will create
+    /// a new future every time it is called, if used in a
+    /// `tokio::select` with other events that trigger more often, the
+    /// tick will never happen. This way we have a separate task that
+    /// will reliably send a notification to the main one.
+    fn start_task_iter_notifier(
+        &self,
+        mut running: watch::Receiver<bool>,
+        scan_trigger: Arc<Notify>,
+    ) {
+        tokio::spawn(async move {
+            while *running.borrow() {
+                let mut interval = tokio::time::interval(Duration::from_secs(30));
+                loop {
+                    tokio::select! {
+                        _ = interval.tick() => scan_trigger.notify_one(),
+                        _ = running.changed() => break,
+                    }
+                }
+            }
+        });
     }
 
     // Gather events from the ring buffer and print them out.
@@ -374,8 +402,9 @@ impl Bpf {
         info!("Starting BPF worker...");
 
         task_set.spawn(async move {
+            let scan_trigger = Arc::new(Notify::new());
             if self.process_config.borrow().enabled() {
-                self.iter_tasks().await?;
+                self.start_task_iter_notifier(self.running.clone(), scan_trigger.clone());
             }
 
             let rb = self.take_ringbuffer()?;
@@ -418,6 +447,7 @@ impl Bpf {
                         }
                         guard.clear_ready();
                     },
+                    _ = scan_trigger.notified() => self.iter_tasks().await?,
                     // The precondition here could directly use `has_changed().is_err()`,
                     // however, since this is a tight loop processing events from the
                     // kernel, using a local variable should be more performant since

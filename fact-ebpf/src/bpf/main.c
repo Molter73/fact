@@ -69,7 +69,7 @@ FACT_BPF_PROG1(file_open, struct file*, file) {
 
   args.metrics->total++;
 
-  file_activity_type_t event_type = FILE_ACTIVITY_INIT;
+  fact_event_type_t event_type = FILE_ACTIVITY_INIT;
   if ((file->f_mode & FMODE_CREATED) != 0) {
     event_type = FILE_ACTIVITY_CREATION;
   } else if ((file->f_mode & (FMODE_WRITE | FMODE_PWRITE)) != 0) {
@@ -472,7 +472,7 @@ cleanup:
 __always_inline static int handle_xattr(struct metrics_by_hook_t* hook_metrics,
                                         struct dentry* dentry,
                                         const char* xattr_name,
-                                        file_activity_type_t event_type) {
+                                        fact_event_type_t event_type) {
   struct submit_event_args_t args = {.metrics = hook_metrics};
 
   args.metrics->total++;
@@ -714,6 +714,8 @@ error:
   return 0;
 }
 
+#define PF_KTHREAD 0x00200000 /* I am a kernel thread */
+
 SEC("tp_btf/sched_process_fork")
 int BPF_PROG(trace_sched_process_fork, struct task_struct* parent, struct task_struct* child) {
   struct metrics_t* m = get_metrics();
@@ -724,12 +726,14 @@ int BPF_PROG(trace_sched_process_fork, struct task_struct* parent, struct task_s
 
   args.metrics->total++;
 
-  if (!process_is_monitored(parent) && !process_is_monitored(child)) {
-    m->sched_fork.ignored++;
+  if ((parent->flags & PF_KTHREAD) != 0 ||  // Kernel threads are ignored
+      parent->tgid == child->tgid ||        // The new child is a thread of the original process, ignore
+      (!process_is_monitored(parent) && !process_is_monitored(child))) {
+    args.metrics->ignored++;
     return 0;
   }
 
-  submit_fork_event(&args, parent, child);
+  submit_fork_event(&args, child);
 
   return 0;
 }
@@ -744,12 +748,34 @@ int BPF_PROG(trace_sched_process_exec, struct task_struct* task, pid_t old_pid, 
 
   args.metrics->total++;
 
-  if (!process_is_monitored(task)) {
+  if ((task->flags & PF_KTHREAD) != 0 ||  // Kernel threads are ignored
+      !process_is_monitored(task)) {
     m->sched_exec.ignored++;
     return 0;
   }
 
   submit_exec_event(&args, task);
+  return 0;
+}
+
+SEC("tp_btf/sched_process_exit")
+int BPF_PROG(trace_sched_process_exit, struct task_struct* task, bool group_dead) {
+  struct metrics_t* m = get_metrics();
+  if (m == NULL) {
+    return 0;
+  }
+  struct submit_event_args_t args = {.metrics = &m->sched_exit};
+
+  args.metrics->total++;
+
+  if ((task->flags & PF_KTHREAD) != 0 ||  // Kernel threads are ignored
+      !group_dead ||                      // The actual process is still running
+      !process_is_monitored(task)) {
+    args.metrics->ignored++;
+    return 0;
+  }
+
+  submit_exit_event(&args, task);
   return 0;
 }
 
@@ -770,7 +796,9 @@ int iter_task(struct bpf_iter__task* ctx) {
 
   m->iter_task.total++;
 
-  if (!process_is_monitored(task) || task != task->group_leader) {
+  if ((task->flags & PF_KTHREAD) != 0 ||
+      task != task->group_leader ||
+      !process_is_monitored(task)) {
     m->iter_task.ignored++;
     return 0;
   }

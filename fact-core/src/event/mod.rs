@@ -13,8 +13,7 @@ use opentelemetry::logs::AnyValue;
 use serde::{Deserialize, Serialize};
 
 use fact_ebpf::{
-    PATH_MAX, XATTR_NAME_MAX_LEN, event_t, file_activity_type_t, inode_key_t, monitored_t,
-    process_t,
+    PATH_MAX, XATTR_NAME_MAX_LEN, event_t, fact_event_type_t, inode_key_t, monitored_t, process_t,
 };
 
 use crate::host_info;
@@ -437,9 +436,7 @@ impl Event {
         use EventData::*;
         match &self.data {
             File { file, .. } => file.event_type(),
-            Process(ProcessData::Fork(_)) => "fork",
-            Process(ProcessData::Exec(_)) => "exec",
-            Process(ProcessData::Proc(_)) => "proc",
+            Process(proc) => proc.event_type(),
         }
     }
 
@@ -525,12 +522,12 @@ impl From<Event> for opentelemetry::logs::AnyValue {
                 map.insert("file".into(), file.into());
                 map.insert("process".into(), process.into());
             }
-            EventData::Process(ProcessData::Fork(ProcessForkData { parent, child })) => {
-                map.insert("parent".into(), parent.into());
-                map.insert("child".into(), child.into());
-            }
-            EventData::Process(ProcessData::Proc(proc))
-            | EventData::Process(ProcessData::Exec(ProcessExecData(proc))) => {
+            EventData::Process(
+                ProcessData::Fork(ProcessForkData { child: proc })
+                | ProcessData::Proc(proc)
+                | ProcessData::Exec(ProcessExecData(proc))
+                | ProcessData::Exit(ProcessExitData(proc)),
+            ) => {
                 map.insert("process".into(), proc.into());
             }
         }
@@ -545,29 +542,10 @@ impl PartialEq for Event {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum EventData {
     File { process: Process, file: FileData },
     Process(ProcessData),
-}
-
-impl PartialEq for EventData {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (
-                Self::File {
-                    process: l_process,
-                    file: l_file,
-                },
-                Self::File {
-                    process: r_process,
-                    file: r_file,
-                },
-            ) => l_process == r_process && l_file == r_file,
-            (Self::Process(left), Self::Process(right)) => left == right,
-            _ => false,
-        }
-    }
 }
 
 impl TryFrom<&event_t> for EventData {
@@ -576,22 +554,22 @@ impl TryFrom<&event_t> for EventData {
     fn try_from(value: &event_t) -> Result<Self, Self::Error> {
         let process = Process::try_from(value.process)?;
         let data = match value.type_ {
-            file_activity_type_t::FILE_ACTIVITY_OPEN
-            | file_activity_type_t::FILE_ACTIVITY_CREATION
-            | file_activity_type_t::FILE_ACTIVITY_LINK
-            | file_activity_type_t::FILE_ACTIVITY_UNLINK
-            | file_activity_type_t::FILE_ACTIVITY_CHMOD
-            | file_activity_type_t::FILE_ACTIVITY_CHOWN
-            | file_activity_type_t::FILE_ACTIVITY_RENAME
-            | file_activity_type_t::DIR_ACTIVITY_CREATION
-            | file_activity_type_t::DIR_ACTIVITY_UNLINK
-            | file_activity_type_t::FILE_ACTIVITY_SETXATTR
-            | file_activity_type_t::FILE_ACTIVITY_REMOVEXATTR
-            | file_activity_type_t::FILE_ACTIVITY_ACL_SET
-            | file_activity_type_t::FILE_ACTIVITY_MOUNT
-            | file_activity_type_t::FILE_ACTIVITY_UMOUNT
-            | file_activity_type_t::FILE_ACTIVITY_MOVE_MOUNT
-            | file_activity_type_t::FILE_ACTIVITY_SYMLINK => EventData::File {
+            fact_event_type_t::FILE_ACTIVITY_OPEN
+            | fact_event_type_t::FILE_ACTIVITY_CREATION
+            | fact_event_type_t::FILE_ACTIVITY_LINK
+            | fact_event_type_t::FILE_ACTIVITY_UNLINK
+            | fact_event_type_t::FILE_ACTIVITY_CHMOD
+            | fact_event_type_t::FILE_ACTIVITY_CHOWN
+            | fact_event_type_t::FILE_ACTIVITY_RENAME
+            | fact_event_type_t::DIR_ACTIVITY_CREATION
+            | fact_event_type_t::DIR_ACTIVITY_UNLINK
+            | fact_event_type_t::FILE_ACTIVITY_SETXATTR
+            | fact_event_type_t::FILE_ACTIVITY_REMOVEXATTR
+            | fact_event_type_t::FILE_ACTIVITY_ACL_SET
+            | fact_event_type_t::FILE_ACTIVITY_MOUNT
+            | fact_event_type_t::FILE_ACTIVITY_UMOUNT
+            | fact_event_type_t::FILE_ACTIVITY_MOVE_MOUNT
+            | fact_event_type_t::FILE_ACTIVITY_SYMLINK => EventData::File {
                 file: FileData::new(
                     value.type_,
                     value.filename,
@@ -602,17 +580,20 @@ impl TryFrom<&event_t> for EventData {
                 )?,
                 process,
             },
-            file_activity_type_t::PROCESS_FORK => {
-                let parent = Process::try_from(value.process)?;
-                let child = unsafe { value.__bindgen_anon_1.fork.child };
-                let child = Process::try_from(child)?;
-                let data = ProcessForkData { parent, child };
+            fact_event_type_t::PROCESS_FORK => {
+                let child = Process::try_from(value.process)?;
+                let data = ProcessForkData { child };
                 EventData::Process(ProcessData::Fork(data))
             }
-            file_activity_type_t::PROCESS_EXEC => {
+            fact_event_type_t::PROCESS_EXEC => {
                 let proc = Process::try_from(value.process)?;
                 let data = ProcessExecData(proc);
                 EventData::Process(ProcessData::Exec(data))
+            }
+            fact_event_type_t::PROCESS_EXIT => {
+                let proc = Process::try_from(value.process)?;
+                let data = ProcessExitData(proc);
+                EventData::Process(ProcessData::Exit(data))
             }
             _ => unreachable!(),
         };
@@ -668,7 +649,7 @@ impl From<fact_api::fact_msg::Msg> for EventData {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum FileData {
     Open(BaseFileData),
     Creation(BaseFileData),
@@ -699,7 +680,7 @@ pub enum FileData {
 
 impl FileData {
     pub fn new(
-        event_type: file_activity_type_t,
+        event_type: fact_event_type_t,
         filename: [c_char; PATH_MAX as usize],
         inode: inode_key_t,
         parent_inode: inode_key_t,
@@ -716,13 +697,13 @@ impl FileData {
 
         let inner = BaseFileData::new(filename, inode, parent_inode, monitored);
         let file = match event_type {
-            file_activity_type_t::FILE_ACTIVITY_OPEN => FileData::Open(inner),
-            file_activity_type_t::FILE_ACTIVITY_CREATION => FileData::Creation(inner),
-            file_activity_type_t::DIR_ACTIVITY_CREATION => FileData::MkDir(inner),
-            file_activity_type_t::DIR_ACTIVITY_UNLINK => FileData::RmDir(inner),
-            file_activity_type_t::FILE_ACTIVITY_LINK => FileData::Link(inner),
-            file_activity_type_t::FILE_ACTIVITY_UNLINK => FileData::Unlink(inner),
-            file_activity_type_t::FILE_ACTIVITY_CHMOD => {
+            fact_event_type_t::FILE_ACTIVITY_OPEN => FileData::Open(inner),
+            fact_event_type_t::FILE_ACTIVITY_CREATION => FileData::Creation(inner),
+            fact_event_type_t::DIR_ACTIVITY_CREATION => FileData::MkDir(inner),
+            fact_event_type_t::DIR_ACTIVITY_UNLINK => FileData::RmDir(inner),
+            fact_event_type_t::FILE_ACTIVITY_LINK => FileData::Link(inner),
+            fact_event_type_t::FILE_ACTIVITY_UNLINK => FileData::Unlink(inner),
+            fact_event_type_t::FILE_ACTIVITY_CHMOD => {
                 let data = ChmodFileData {
                     inner,
                     new_mode: unsafe { extra_data.chmod.new },
@@ -730,7 +711,7 @@ impl FileData {
                 };
                 FileData::Chmod(data)
             }
-            file_activity_type_t::FILE_ACTIVITY_CHOWN => {
+            fact_event_type_t::FILE_ACTIVITY_CHOWN => {
                 let data = ChownFileData {
                     inner,
                     new_uid: unsafe { extra_data.chown.new.uid },
@@ -740,23 +721,23 @@ impl FileData {
                 };
                 FileData::Chown(data)
             }
-            file_activity_type_t::FILE_ACTIVITY_RENAME => {
+            fact_event_type_t::FILE_ACTIVITY_RENAME => {
                 let old = read_from_data(extra_data);
                 FileData::Rename { new: inner, old }
             }
-            file_activity_type_t::FILE_ACTIVITY_SETXATTR => {
+            fact_event_type_t::FILE_ACTIVITY_SETXATTR => {
                 let xattr_name = slice_to_string(
                     &unsafe { extra_data.xattr }.name[..XATTR_NAME_MAX_LEN as usize],
                 )?;
                 FileData::SetXattr(XattrFileData { inner, xattr_name })
             }
-            file_activity_type_t::FILE_ACTIVITY_REMOVEXATTR => {
+            fact_event_type_t::FILE_ACTIVITY_REMOVEXATTR => {
                 let xattr_name = slice_to_string(
                     &unsafe { extra_data.xattr }.name[..XATTR_NAME_MAX_LEN as usize],
                 )?;
                 FileData::RemoveXattr(XattrFileData { inner, xattr_name })
             }
-            file_activity_type_t::FILE_ACTIVITY_ACL_SET => {
+            fact_event_type_t::FILE_ACTIVITY_ACL_SET => {
                 let acl = unsafe { &extra_data.acl };
                 let acl_type = if acl.acl_type == fact_ebpf::acl_type_t::FACT_ACL_TYPE_DEFAULT {
                     AclType::Default
@@ -771,13 +752,13 @@ impl FileData {
                     entries,
                 })
             }
-            file_activity_type_t::FILE_ACTIVITY_MOUNT => FileData::Mount(inner),
-            file_activity_type_t::FILE_ACTIVITY_UMOUNT => FileData::Umount(inner),
-            file_activity_type_t::FILE_ACTIVITY_MOVE_MOUNT => {
+            fact_event_type_t::FILE_ACTIVITY_MOUNT => FileData::Mount(inner),
+            fact_event_type_t::FILE_ACTIVITY_UMOUNT => FileData::Umount(inner),
+            fact_event_type_t::FILE_ACTIVITY_MOVE_MOUNT => {
                 let from = read_from_data(extra_data);
                 FileData::MoveMount { to: inner, from }
             }
-            file_activity_type_t::FILE_ACTIVITY_SYMLINK => {
+            fact_event_type_t::FILE_ACTIVITY_SYMLINK => {
                 let target = unsafe { extra_data.from.filename };
                 let target = sanitize_d_path(&target);
                 FileData::Symlink { inner, target }
@@ -1004,39 +985,7 @@ impl From<fact_api::file_activity::File> for FileData {
     }
 }
 
-impl PartialEq for FileData {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (FileData::Open(this), FileData::Open(other)) => this == other,
-            (FileData::Creation(this), FileData::Creation(other)) => this == other,
-            (FileData::MkDir(this), FileData::MkDir(other)) => this == other,
-            (FileData::RmDir(this), FileData::RmDir(other)) => this == other,
-            (FileData::Unlink(this), FileData::Unlink(other)) => this == other,
-            (FileData::Chmod(this), FileData::Chmod(other)) => this == other,
-            (FileData::Chown(this), FileData::Chown(other)) => this == other,
-            (
-                FileData::Rename {
-                    new: l_new,
-                    old: l_old,
-                },
-                FileData::Rename {
-                    new: r_new,
-                    old: r_old,
-                },
-            ) => l_new == r_new && l_old == r_old,
-            (FileData::SetXattr(this), FileData::SetXattr(other)) => this == other,
-            (FileData::RemoveXattr(this), FileData::RemoveXattr(other)) => this == other,
-            (FileData::AclSet(this), FileData::AclSet(other)) => {
-                this.inner == other.inner
-                    && this.acl_type == other.acl_type
-                    && this.entries == other.entries
-            }
-            _ => false,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct BaseFileData {
     pub filename: PathBuf,
     host_file: PathBuf,
@@ -1059,12 +1008,6 @@ impl BaseFileData {
             parent_inode,
             monitored,
         }
-    }
-}
-
-impl PartialEq for BaseFileData {
-    fn eq(&self, other: &Self) -> bool {
-        self.filename == other.filename && self.host_file == other.host_file
     }
 }
 
@@ -1103,7 +1046,7 @@ impl From<fact_api::FileActivityBase> for BaseFileData {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChmodFileData {
     inner: BaseFileData,
     new_mode: u16,
@@ -1140,31 +1083,13 @@ impl From<ChmodFileData> for opentelemetry::logs::AnyValue {
     }
 }
 
-impl PartialEq for ChmodFileData {
-    fn eq(&self, other: &Self) -> bool {
-        self.new_mode == other.new_mode
-            && self.old_mode == other.old_mode
-            && self.inner == other.inner
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChownFileData {
     inner: BaseFileData,
     new_uid: u32,
     new_gid: u32,
     old_uid: u32,
     old_gid: u32,
-}
-
-impl PartialEq for ChownFileData {
-    fn eq(&self, other: &Self) -> bool {
-        self.new_uid == other.new_uid
-            && self.new_gid == other.new_gid
-            && self.old_uid == other.old_uid
-            && self.old_gid == other.old_gid
-            && self.inner == other.inner
-    }
 }
 
 impl From<ChownFileData> for fact_api::FileOwnershipChange {
@@ -1300,7 +1225,7 @@ impl From<AclType> for opentelemetry::logs::AnyValue {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AclSetFileData {
     inner: BaseFileData,
     acl_type: AclType,
@@ -1403,20 +1328,23 @@ impl PartialEq for XattrFileData {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ProcessData {
     Fork(ProcessForkData),
     Exec(ProcessExecData),
+    Exit(ProcessExitData),
     Proc(Process),
 }
 
-impl PartialEq for ProcessData {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Fork(left), Self::Fork(right)) => left == right,
-            (Self::Exec(left), Self::Exec(right)) => left == right,
-            (Self::Proc(left), Self::Proc(right)) => left == right,
-            (_, _) => false,
+impl ProcessData {
+    #[cfg(feature = "otel")]
+    fn event_type(&self) -> &'static str {
+        use ProcessData::*;
+        match self {
+            Fork(_) => "fork",
+            Exec(_) => "exec",
+            Proc(_) => "proc",
+            Exit(_) => "exit",
         }
     }
 }
@@ -1425,9 +1353,8 @@ impl From<ProcessData> for fact_api::process_activity::Process {
     fn from(value: ProcessData) -> Self {
         match value {
             ProcessData::Fork(data) => fact_api::process_activity::Process::Fork(data.into()),
-            ProcessData::Exec(ProcessExecData(proc)) => {
-                fact_api::process_activity::Process::Exec(proc.into())
-            }
+            ProcessData::Exec(proc) => fact_api::process_activity::Process::Exec(proc.into()),
+            ProcessData::Exit(proc) => fact_api::process_activity::Process::Exit(proc.into()),
             ProcessData::Proc(proc) => fact_api::process_activity::Process::Proc(proc.into()),
         }
     }
@@ -1439,26 +1366,19 @@ impl From<fact_api::process_activity::Process> for ProcessData {
             fact_api::process_activity::Process::Fork(data) => ProcessData::Fork(data.into()),
             fact_api::process_activity::Process::Exec(process) => ProcessData::Exec(process.into()),
             fact_api::process_activity::Process::Proc(process) => ProcessData::Proc(process.into()),
+            fact_api::process_activity::Process::Exit(process) => ProcessData::Exit(process.into()),
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProcessForkData {
-    parent: Process,
-    child: Process,
-}
-
-impl PartialEq for ProcessForkData {
-    fn eq(&self, other: &Self) -> bool {
-        self.parent == other.parent && self.child == other.child
-    }
+    pub child: Process,
 }
 
 impl From<ProcessForkData> for fact_api::ProcessFork {
-    fn from(ProcessForkData { parent, child }: ProcessForkData) -> Self {
+    fn from(ProcessForkData { child }: ProcessForkData) -> Self {
         fact_api::ProcessFork {
-            parent: Some(parent.into()),
             child: Some(child.into()),
         }
     }
@@ -1467,11 +1387,7 @@ impl From<ProcessForkData> for fact_api::ProcessFork {
 impl From<fact_api::ProcessFork> for ProcessForkData {
     fn from(value: fact_api::ProcessFork) -> Self {
         match value {
-            fact_api::ProcessFork {
-                parent: Some(parent),
-                child: Some(child),
-            } => ProcessForkData {
-                parent: parent.into(),
+            fact_api::ProcessFork { child: Some(child) } => ProcessForkData {
                 child: child.into(),
             },
             _ => unreachable!("Invalid process fork message received"),
@@ -1479,14 +1395,8 @@ impl From<fact_api::ProcessFork> for ProcessForkData {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessExecData(Process);
-
-impl PartialEq for ProcessExecData {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProcessExecData(pub Process);
 
 impl From<ProcessExecData> for fact_api::Process {
     fn from(ProcessExecData(proc): ProcessExecData) -> Self {
@@ -1497,6 +1407,21 @@ impl From<ProcessExecData> for fact_api::Process {
 impl From<fact_api::Process> for ProcessExecData {
     fn from(proc: fact_api::Process) -> Self {
         ProcessExecData(proc.into())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProcessExitData(pub Process);
+
+impl From<ProcessExitData> for fact_api::Process {
+    fn from(ProcessExitData(proc): ProcessExitData) -> Self {
+        proc.into()
+    }
+}
+
+impl From<fact_api::Process> for ProcessExitData {
+    fn from(proc: fact_api::Process) -> Self {
+        ProcessExitData(proc.into())
     }
 }
 

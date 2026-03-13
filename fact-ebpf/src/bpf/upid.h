@@ -8,7 +8,7 @@
 #include <bpf/bpf_helpers.h>
 // clang-format on
 
-__always_inline static uint64_t get_task_upid(const struct task_struct* task) {
+__always_inline static uint64_t get_upid(const struct task_struct* task) {
   static uint64_t global_upid = 1;
 
   // The upid is always assigned to the group_leader
@@ -34,4 +34,13 @@ __always_inline static uint64_t get_task_upid(const struct task_struct* task) {
   bpf_spin_unlock(&upid->semaphore);
 
   return upid->id;
+}
+
+__always_inline static uint64_t get_parent_upid(const struct task_struct* task) {
+  struct task_struct* parent = task->real_parent;
+  if (parent == NULL) {
+    return 0;
+  }
+
+  return get_upid(parent);
 }

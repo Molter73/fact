@@ -115,36 +115,6 @@ __always_inline static long read_exe_file(struct task_struct* task, char buf[PAT
   }
 }
 
-__always_inline static void process_fill_lineage(process_t* p, struct task_struct* _task, struct helper_t* helper, bool use_bpf_d_path, bool use_get_task_exe_file) {
-  struct task_struct* task = bpf_task_acquire(_task);
-  if (task == NULL) {
-    return;
-  }
-  p->lineage_len = 0;
-
-  for (int i = 0; i < LINEAGE_MAX; i++) {
-    // All our LSM hooks run with preemption disabled, which effectively
-    // turns the entire programs into RCU critical sections, so we can
-    // call `bpf_task_acquire` without calling `bpf_rcu_read_lock`.
-    struct task_struct* parent = bpf_task_acquire(task->real_parent);
-
-    if (parent == NULL) {
-      break;
-    } else if (task == parent || parent->pid == 0) {
-      bpf_task_release(parent);
-      break;
-    }
-
-    bpf_task_release(task);
-    task = parent;
-
-    p->lineage[i].uid = task->cred->uid.val;
-    read_exe_file(task, p->lineage[i].exe_path, use_bpf_d_path, use_get_task_exe_file);
-    p->lineage_len++;
-  }
-  bpf_task_release(task);
-}
-
 __always_inline static unsigned long get_mount_ns(const struct task_struct* task) {
   return task->nsproxy->mnt_ns->ns.inum;
 }
@@ -155,7 +125,8 @@ __always_inline static int64_t process_fill(process_t* p, struct task_struct* ta
   p->gid = task->cred->gid.val;
   p->login_uid = task->loginuid.val;
   p->pid = task->tgid;
-  p->upid = get_task_upid(task);
+  p->upid = get_upid(task);
+  p->parent_upid = get_parent_upid(task);
   uint64_t err = bpf_probe_read_kernel(p->comm, TASK_COMM_LEN, task->comm);
   if (err != 0) {
     bpf_printk("Failed to fill task comm");
@@ -188,8 +159,6 @@ __always_inline static int64_t process_fill(process_t* p, struct task_struct* ta
   }
 
   p->in_root_mount_ns = get_mount_ns(task) == host_mount_ns;
-
-  process_fill_lineage(p, task, helper, use_bpf_d_path, use_get_task_exe_file);
 
   return 0;
 }

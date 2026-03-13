@@ -89,7 +89,7 @@ struct d_instantiate_ctx_t {
   struct bound_path_t path;
   inode_key_t parent_inode;
   monitored_t monitored;
-  file_activity_type_t event_type;
+  fact_event_type_t event_type;
   char symlink_target[PATH_MAX];
 };
 

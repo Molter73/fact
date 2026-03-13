@@ -72,7 +72,7 @@ error:
 }
 
 __always_inline static void submit_open_event(struct submit_event_args_t* args,
-                                              file_activity_type_t event_type) {
+                                              fact_event_type_t event_type) {
   if (!reserve_event(args)) {
     return;
   }
@@ -167,7 +167,7 @@ __always_inline static void submit_rmdir_event(struct submit_event_args_t* args)
 }
 
 __always_inline static void submit_xattr_event(struct submit_event_args_t* args,
-                                               file_activity_type_t event_type,
+                                               fact_event_type_t event_type,
                                                const char* xattr_name) {
   if (!reserve_event(args)) {
     return;
@@ -276,28 +276,30 @@ __always_inline static void submit_symlink_event(struct submit_event_args_t* arg
   __submit_file_event(args, false);
 }
 
-__always_inline static void submit_fork_event(struct submit_event_args_t* args,
-                                              struct task_struct* parent,
-                                              struct task_struct* child) {
+__always_inline static void __submit_process_event(struct submit_event_args_t* args,
+                                                   struct task_struct* task,
+                                                   fact_event_type_t type) {
   if (!reserve_event(args)) {
     return;
   }
 
-  args->event->type = PROCESS_FORK;
-  process_fill(&args->event->process, parent, false, false);
-  process_fill(&args->event->fork.child, child, false, false);
+  args->event->type = type;
+  process_fill(&args->event->process, task, false, false);
 
   __submit_event(args);
 }
 
+__always_inline static void submit_fork_event(struct submit_event_args_t* args,
+                                              struct task_struct* child) {
+  __submit_process_event(args, child, PROCESS_FORK);
+}
+
 __always_inline static void submit_exec_event(struct submit_event_args_t* args,
                                               struct task_struct* task) {
-  if (!reserve_event(args)) {
-    return;
-  }
+  __submit_process_event(args, task, PROCESS_EXEC);
+}
 
-  args->event->type = PROCESS_EXEC;
-  process_fill(&args->event->process, task, false, false);
-
-  __submit_event(args);
+__always_inline static void submit_exit_event(struct submit_event_args_t* args,
+                                              struct task_struct* task) {
+  __submit_process_event(args, task, PROCESS_EXIT);
 }
