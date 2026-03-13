@@ -113,6 +113,7 @@ impl metrics_t {
         self.path_rename = self.path_rename.accumulate(&other.path_rename);
         self.sched_fork = self.sched_fork.accumulate(&other.sched_fork);
         self.sched_exec = self.sched_exec.accumulate(&other.sched_exec);
+        self.sched_exit = self.sched_exit.accumulate(&other.sched_exit);
         self.iter_task = self.iter_task.accumulate(&other.iter_task);
         self
     }

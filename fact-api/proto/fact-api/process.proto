@@ -40,14 +40,6 @@ message Process {
   // Signal origin
   bool scraped = 10;
 
-  // Process LineageInfo
-  repeated LineageInfo lineage_info = 11;
-
-  message LineageInfo {
-    uint32 parent_uid = 1;
-    string parent_exec_file_path = 2;
-  }
-
   // SFA fields
   // User ID used for login to the system
   uint32 login_uid = 12;
@@ -57,10 +49,12 @@ message Process {
 
   // whether the process is running on the root mount namespace
   bool in_root_mount_ns = 14;
+
+  uint64 upid = 15;
+  uint64 parent_upid = 16;
 }
 
 message ProcessFork {
-  Process parent = 1;
   Process child = 2;
 }
 
@@ -69,5 +63,6 @@ message ProcessActivity {
     ProcessFork fork = 1;
     Process exec = 2;
     Process proc = 3;
+    Process exit = 4;
   }
 }

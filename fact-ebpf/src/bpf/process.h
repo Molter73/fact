@@ -99,24 +99,6 @@ __always_inline static const char* get_memory_cgroup(struct helper_t* helper, co
   return helper->buf;
 }
 
-__always_inline static void process_fill_lineage(process_t* p, const struct task_struct* task, struct helper_t* helper, bool use_bpf_d_path) {
-  p->lineage_len = 0;
-
-  for (int i = 0; i < LINEAGE_MAX; i++) {
-    struct task_struct* parent = task->real_parent;
-
-    if (task == parent || parent->pid == 0) {
-      return;
-    }
-    task = parent;
-
-    p->lineage[i].uid = task->cred->uid.val;
-
-    d_path(&task->mm->exe_file->f_path, p->lineage[i].exe_path, PATH_MAX, use_bpf_d_path);
-    p->lineage_len++;
-  }
-}
-
 __always_inline static unsigned long get_mount_ns(const struct task_struct* task) {
   return task->nsproxy->mnt_ns->ns.inum;
 }
@@ -127,7 +109,8 @@ __always_inline static int64_t process_fill(process_t* p, const struct task_stru
   p->gid = task->cred->gid.val;
   p->login_uid = task->loginuid.val;
   p->pid = task->tgid;
-  p->upid = get_task_upid(task);
+  p->upid = get_upid(task);
+  p->parent_upid = get_parent_upid(task);
   uint64_t err = bpf_probe_read_kernel(p->comm, TASK_COMM_LEN, task->comm);
   if (err != 0) {
     bpf_printk("Failed to fill task comm");
@@ -160,8 +143,6 @@ __always_inline static int64_t process_fill(process_t* p, const struct task_stru
   }
 
   p->in_root_mount_ns = get_mount_ns(task) == host_mount_ns;
-
-  process_fill_lineage(p, task, helper, use_bpf_d_path);
 
   return 0;
 }

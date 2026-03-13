@@ -8,7 +8,7 @@ use std::{
 use libc::CLOCK_REALTIME;
 use serde::Serialize;
 
-use fact_ebpf::{PATH_MAX, event_t, file_activity_type_t, inode_key_t, process_t};
+use fact_ebpf::{PATH_MAX, event_t, fact_event_type_t, inode_key_t, process_t};
 
 use crate::host_info;
 use process::Process;
@@ -74,7 +74,7 @@ pub enum EventTestData {
 pub struct Event {
     timestamp: u64,
     hostname: String,
-    data: EventData,
+    pub data: EventData,
 }
 
 impl Event {
@@ -295,29 +295,10 @@ impl PartialEq for Event {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub enum EventData {
     File { process: Process, file: FileData },
     Process(ProcessData),
-}
-
-impl PartialEq for EventData {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (
-                Self::File {
-                    process: l_process,
-                    file: l_file,
-                },
-                Self::File {
-                    process: r_process,
-                    file: r_file,
-                },
-            ) => l_process == r_process && l_file == r_file,
-            (Self::Process(left), Self::Process(right)) => left == right,
-            _ => false,
-        }
-    }
 }
 
 impl TryFrom<&event_t> for EventData {
@@ -326,12 +307,12 @@ impl TryFrom<&event_t> for EventData {
     fn try_from(value: &event_t) -> Result<Self, Self::Error> {
         let process = Process::try_from(value.process)?;
         let data = match value.type_ {
-            file_activity_type_t::FILE_ACTIVITY_OPEN
-            | file_activity_type_t::FILE_ACTIVITY_CREATION
-            | file_activity_type_t::FILE_ACTIVITY_UNLINK
-            | file_activity_type_t::FILE_ACTIVITY_CHMOD
-            | file_activity_type_t::FILE_ACTIVITY_CHOWN
-            | file_activity_type_t::FILE_ACTIVITY_RENAME => EventData::File {
+            fact_event_type_t::FILE_ACTIVITY_OPEN
+            | fact_event_type_t::FILE_ACTIVITY_CREATION
+            | fact_event_type_t::FILE_ACTIVITY_UNLINK
+            | fact_event_type_t::FILE_ACTIVITY_CHMOD
+            | fact_event_type_t::FILE_ACTIVITY_CHOWN
+            | fact_event_type_t::FILE_ACTIVITY_RENAME => EventData::File {
                 file: FileData::new(
                     value.type_,
                     value.filename,
@@ -340,17 +321,20 @@ impl TryFrom<&event_t> for EventData {
                 )?,
                 process,
             },
-            file_activity_type_t::PROCESS_FORK => {
-                let parent = Process::try_from(value.process)?;
-                let child = unsafe { value.__bindgen_anon_1.fork.child };
-                let child = Process::try_from(child)?;
-                let data = ProcessForkData { parent, child };
+            fact_event_type_t::PROCESS_FORK => {
+                let child = Process::try_from(value.process)?;
+                let data = ProcessForkData { child };
                 EventData::Process(ProcessData::Fork(data))
             }
-            file_activity_type_t::PROCESS_EXEC => {
+            fact_event_type_t::PROCESS_EXEC => {
                 let proc = Process::try_from(value.process)?;
                 let data = ProcessExecData(proc);
                 EventData::Process(ProcessData::Exec(data))
+            }
+            fact_event_type_t::PROCESS_EXIT => {
+                let proc = Process::try_from(value.process)?;
+                let data = ProcessExitData(proc);
+                EventData::Process(ProcessData::Exit(data))
             }
             _ => unreachable!(),
         };
@@ -406,7 +390,7 @@ impl From<fact_api::fact_msg::Msg> for EventData {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub enum FileData {
     Open(BaseFileData),
     Creation(BaseFileData),
@@ -418,17 +402,17 @@ pub enum FileData {
 
 impl FileData {
     pub fn new(
-        event_type: file_activity_type_t,
+        event_type: fact_event_type_t,
         filename: [c_char; PATH_MAX as usize],
         inode: inode_key_t,
         extra_data: fact_ebpf::event_t__bindgen_ty_1,
     ) -> anyhow::Result<Self> {
         let inner = BaseFileData::new(filename, inode)?;
         let file = match event_type {
-            file_activity_type_t::FILE_ACTIVITY_OPEN => FileData::Open(inner),
-            file_activity_type_t::FILE_ACTIVITY_CREATION => FileData::Creation(inner),
-            file_activity_type_t::FILE_ACTIVITY_UNLINK => FileData::Unlink(inner),
-            file_activity_type_t::FILE_ACTIVITY_CHMOD => {
+            fact_event_type_t::FILE_ACTIVITY_OPEN => FileData::Open(inner),
+            fact_event_type_t::FILE_ACTIVITY_CREATION => FileData::Creation(inner),
+            fact_event_type_t::FILE_ACTIVITY_UNLINK => FileData::Unlink(inner),
+            fact_event_type_t::FILE_ACTIVITY_CHMOD => {
                 let data = ChmodFileData {
                     inner,
                     new_mode: unsafe { extra_data.chmod.new },
@@ -436,7 +420,7 @@ impl FileData {
                 };
                 FileData::Chmod(data)
             }
-            file_activity_type_t::FILE_ACTIVITY_CHOWN => {
+            fact_event_type_t::FILE_ACTIVITY_CHOWN => {
                 let data = ChownFileData {
                     inner,
                     new_uid: unsafe { extra_data.chown.new.uid },
@@ -446,7 +430,7 @@ impl FileData {
                 };
                 FileData::Chown(data)
             }
-            file_activity_type_t::FILE_ACTIVITY_RENAME => {
+            fact_event_type_t::FILE_ACTIVITY_RENAME => {
                 let old_filename = unsafe { extra_data.rename.old_filename };
                 let old_inode = unsafe { extra_data.rename.old_inode };
                 let data = RenameFileData {
@@ -540,19 +524,6 @@ impl From<fact_api::file_activity::File> for FileData {
     }
 }
 
-impl PartialEq for FileData {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (FileData::Open(this), FileData::Open(other)) => this == other,
-            (FileData::Creation(this), FileData::Creation(other)) => this == other,
-            (FileData::Unlink(this), FileData::Unlink(other)) => this == other,
-            (FileData::Chmod(this), FileData::Chmod(other)) => this == other,
-            (FileData::Rename(this), FileData::Rename(other)) => this == other,
-            _ => false,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct BaseFileData {
     pub filename: PathBuf,
@@ -595,7 +566,7 @@ impl From<fact_api::FileActivityBase> for BaseFileData {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ChmodFileData {
     inner: BaseFileData,
     new_mode: u16,
@@ -617,15 +588,7 @@ impl From<ChmodFileData> for fact_api::FilePermissionChange {
     }
 }
 
-impl PartialEq for ChmodFileData {
-    fn eq(&self, other: &Self) -> bool {
-        self.new_mode == other.new_mode
-            && self.old_mode == other.old_mode
-            && self.inner == other.inner
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ChownFileData {
     inner: BaseFileData,
     new_uid: u32,
@@ -653,7 +616,7 @@ impl From<ChownFileData> for fact_api::FileOwnershipChange {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct RenameFileData {
     new: BaseFileData,
     old: BaseFileData,
@@ -670,37 +633,20 @@ impl From<RenameFileData> for fact_api::FileRename {
     }
 }
 
-impl PartialEq for RenameFileData {
-    fn eq(&self, other: &Self) -> bool {
-        self.new == other.new && self.old == other.old
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub enum ProcessData {
     Fork(ProcessForkData),
     Exec(ProcessExecData),
+    Exit(ProcessExitData),
     Proc(Process),
-}
-
-impl PartialEq for ProcessData {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Fork(left), Self::Fork(right)) => left == right,
-            (Self::Exec(left), Self::Exec(right)) => left == right,
-            (Self::Proc(left), Self::Proc(right)) => left == right,
-            (_, _) => false,
-        }
-    }
 }
 
 impl From<ProcessData> for fact_api::process_activity::Process {
     fn from(value: ProcessData) -> Self {
         match value {
             ProcessData::Fork(data) => fact_api::process_activity::Process::Fork(data.into()),
-            ProcessData::Exec(ProcessExecData(proc)) => {
-                fact_api::process_activity::Process::Exec(proc.into())
-            }
+            ProcessData::Exec(proc) => fact_api::process_activity::Process::Exec(proc.into()),
+            ProcessData::Exit(proc) => fact_api::process_activity::Process::Exit(proc.into()),
             ProcessData::Proc(proc) => fact_api::process_activity::Process::Proc(proc.into()),
         }
     }
@@ -712,26 +658,19 @@ impl From<fact_api::process_activity::Process> for ProcessData {
             fact_api::process_activity::Process::Fork(data) => ProcessData::Fork(data.into()),
             fact_api::process_activity::Process::Exec(process) => ProcessData::Exec(process.into()),
             fact_api::process_activity::Process::Proc(process) => ProcessData::Proc(process.into()),
+            fact_api::process_activity::Process::Exit(process) => ProcessData::Exit(process.into()),
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ProcessForkData {
-    parent: Process,
-    child: Process,
-}
-
-impl PartialEq for ProcessForkData {
-    fn eq(&self, other: &Self) -> bool {
-        self.parent == other.parent && self.child == other.child
-    }
+    pub child: Process,
 }
 
 impl From<ProcessForkData> for fact_api::ProcessFork {
-    fn from(ProcessForkData { parent, child }: ProcessForkData) -> Self {
+    fn from(ProcessForkData { child }: ProcessForkData) -> Self {
         fact_api::ProcessFork {
-            parent: Some(parent.into()),
             child: Some(child.into()),
         }
     }
@@ -740,11 +679,7 @@ impl From<ProcessForkData> for fact_api::ProcessFork {
 impl From<fact_api::ProcessFork> for ProcessForkData {
     fn from(value: fact_api::ProcessFork) -> Self {
         match value {
-            fact_api::ProcessFork {
-                parent: Some(parent),
-                child: Some(child),
-            } => ProcessForkData {
-                parent: parent.into(),
+            fact_api::ProcessFork { child: Some(child) } => ProcessForkData {
                 child: child.into(),
             },
             _ => unreachable!("Invalid process fork message received"),
@@ -752,14 +687,8 @@ impl From<fact_api::ProcessFork> for ProcessForkData {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct ProcessExecData(Process);
-
-impl PartialEq for ProcessExecData {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ProcessExecData(pub Process);
 
 impl From<ProcessExecData> for fact_api::Process {
     fn from(ProcessExecData(proc): ProcessExecData) -> Self {
@@ -770,6 +699,21 @@ impl From<ProcessExecData> for fact_api::Process {
 impl From<fact_api::Process> for ProcessExecData {
     fn from(proc: fact_api::Process) -> Self {
         ProcessExecData(proc.into())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ProcessExitData(pub Process);
+
+impl From<ProcessExitData> for fact_api::Process {
+    fn from(ProcessExitData(proc): ProcessExitData) -> Self {
+        proc.into()
+    }
+}
+
+impl From<fact_api::Process> for ProcessExitData {
+    fn from(proc: fact_api::Process) -> Self {
+        ProcessExitData(proc.into())
     }
 }
 

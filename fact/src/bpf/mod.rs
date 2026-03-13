@@ -1,4 +1,4 @@
-use std::{io, path::PathBuf};
+use std::{io, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{bail, Context};
 use aya::{
@@ -8,11 +8,11 @@ use aya::{
 };
 use checks::Checks;
 use libc::c_char;
-use log::{error, info};
+use log::{debug, error, info};
 use tokio::{
     fs::File,
     io::{unix::AsyncFd, AsyncReadExt, BufReader},
-    sync::{mpsc, watch},
+    sync::{mpsc, watch, Notify},
     task::JoinHandle,
 };
 
@@ -209,6 +209,7 @@ impl Bpf {
     }
 
     async fn iter_tasks(&mut self) -> anyhow::Result<()> {
+        debug!("Starting task iterator...");
         let prog = self
             .obj
             .program_mut("iter_task")
@@ -238,7 +239,34 @@ impl Bpf {
             }
         }
 
+        debug!("Task iteration done");
         Ok(())
+    }
+
+    /// Periodically notify the BPF worker to send all process
+    /// information.
+    ///
+    /// This is needed because `tokio::time::Interval::tick` will create
+    /// a new future every time it is called, if used in a
+    /// `tokio::select` with other events that trigger more often, the
+    /// tick will never happen. This way we have a separate task that
+    /// will reliably send a notification to the main one.
+    fn start_task_iter_notifier(
+        &self,
+        mut running: watch::Receiver<bool>,
+        scan_trigger: Arc<Notify>,
+    ) {
+        tokio::spawn(async move {
+            while *running.borrow() {
+                let mut interval = tokio::time::interval(Duration::from_secs(30));
+                loop {
+                    tokio::select! {
+                        _ = interval.tick() => scan_trigger.notify_one(),
+                        _ = running.changed() => break,
+                    }
+                }
+            }
+        });
     }
 
     // Gather events from the ring buffer and print them out.
@@ -253,8 +281,9 @@ impl Bpf {
             self.attach_progs()
                 .context("Failed to attach ebpf programs")?;
 
+            let scan_trigger = Arc::new(Notify::new());
             if self.process_config.borrow().enabled() {
-                self.iter_tasks().await?;
+                self.start_task_iter_notifier(running.clone(), scan_trigger.clone());
             }
 
             let rb = self.take_ringbuffer()?;
@@ -285,6 +314,7 @@ impl Bpf {
                         }
                         guard.clear_ready();
                     },
+                    _ = scan_trigger.notified() => self.iter_tasks().await?,
                     _ = self.paths_config.changed() => {
                         self.load_paths().context("Failed to load paths")?;
                     },

@@ -14,7 +14,7 @@
 
 __always_inline static void __submit_event(struct event_t* event,
                                            struct metrics_by_hook_t* m,
-                                           file_activity_type_t event_type) {
+                                           fact_event_type_t event_type) {
   event->type = event_type;
   event->timestamp = bpf_ktime_get_boot_ns();
 
@@ -25,7 +25,7 @@ __always_inline static void __submit_event(struct event_t* event,
 
 __always_inline static void __submit_file_event(struct event_t* event,
                                                 struct metrics_by_hook_t* m,
-                                                file_activity_type_t event_type,
+                                                fact_event_type_t event_type,
                                                 const char filename[PATH_MAX],
                                                 inode_key_t* inode,
                                                 bool use_bpf_d_path) {
@@ -53,7 +53,7 @@ error:
 }
 
 __always_inline static void submit_open_event(struct metrics_by_hook_t* m,
-                                              file_activity_type_t event_type,
+                                              fact_event_type_t event_type,
                                               const char filename[PATH_MAX],
                                               inode_key_t* inode) {
   struct event_t* event = bpf_ringbuf_reserve(&rb, sizeof(struct event_t), 0);
@@ -132,23 +132,9 @@ __always_inline static void submit_rename_event(struct metrics_by_hook_t* m,
   __submit_file_event(event, m, FILE_ACTIVITY_RENAME, new_filename, new_inode, path_hooks_support_bpf_d_path);
 }
 
-__always_inline static void submit_fork_event(struct metrics_by_hook_t* m,
-                                              const struct task_struct* parent,
-                                              const struct task_struct* child) {
-  struct event_t* event = bpf_ringbuf_reserve(&rb, sizeof(struct event_t), 0);
-  if (event == NULL) {
-    m->ringbuffer_full++;
-    return;
-  }
-
-  process_fill(&event->process, parent, false);
-  process_fill(&event->fork.child, child, false);
-
-  __submit_event(event, m, PROCESS_FORK);
-}
-
-__always_inline static void submit_exec_event(struct metrics_by_hook_t* m,
-                                              const struct task_struct* task) {
+__always_inline static void __submit_process_event(struct metrics_by_hook_t* m,
+                                                   const struct task_struct* task,
+                                                   fact_event_type_t type) {
   struct event_t* event = bpf_ringbuf_reserve(&rb, sizeof(struct event_t), 0);
   if (event == NULL) {
     m->ringbuffer_full++;
@@ -157,5 +143,19 @@ __always_inline static void submit_exec_event(struct metrics_by_hook_t* m,
 
   process_fill(&event->process, task, false);
 
-  __submit_event(event, m, PROCESS_EXEC);
+  __submit_event(event, m, type);
+}
+__always_inline static void submit_fork_event(struct metrics_by_hook_t* m,
+                                              const struct task_struct* child) {
+  __submit_process_event(m, child, PROCESS_FORK);
+}
+
+__always_inline static void submit_exec_event(struct metrics_by_hook_t* m,
+                                              const struct task_struct* task) {
+  __submit_process_event(m, task, PROCESS_EXEC);
+}
+
+__always_inline static void submit_exit_event(struct metrics_by_hook_t* m,
+                                              const struct task_struct* task) {
+  __submit_process_event(m, task, PROCESS_EXIT);
 }
