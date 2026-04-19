@@ -6,6 +6,7 @@ import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 import "fact-api/file.proto";
 import "fact-api/process.proto";
+import "fact-api/network.proto";
 
 option cc_enable_arenas = true;
 
@@ -16,6 +17,7 @@ message FactMsg {
   oneof msg {
     FileActivity file = 3;
     ProcessActivity process = 4;
+    NetworkActivity net = 5;
   }
 }
 

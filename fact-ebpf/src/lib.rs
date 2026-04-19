@@ -115,6 +115,7 @@ impl metrics_t {
         self.sched_exec = self.sched_exec.accumulate(&other.sched_exec);
         self.sched_exit = self.sched_exit.accumulate(&other.sched_exit);
         self.iter_task = self.iter_task.accumulate(&other.iter_task);
+        self.socket_listen = self.socket_listen.accumulate(&other.socket_listen);
         self
     }
 }

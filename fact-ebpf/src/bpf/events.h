@@ -9,6 +9,7 @@
 #include "process.h"
 #include "types.h"
 
+#include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
 // clang-format on
 
@@ -29,8 +30,8 @@ __always_inline static void __submit_file_event(struct event_t* event,
                                                 const char filename[PATH_MAX],
                                                 inode_key_t* inode,
                                                 bool use_bpf_d_path) {
-  inode_copy_or_reset(&event->inode, inode);
-  bpf_probe_read_str(event->filename, PATH_MAX, filename);
+  inode_copy_or_reset(&event->common_data.file.inode, inode);
+  bpf_probe_read_str(event->common_data.file.path, PATH_MAX, filename);
 
   struct helper_t* helper = get_helper();
   if (helper == NULL) {
@@ -158,4 +159,52 @@ __always_inline static void submit_exec_event(struct metrics_by_hook_t* m,
 __always_inline static void submit_exit_event(struct metrics_by_hook_t* m,
                                               const struct task_struct* task) {
   __submit_process_event(m, task, PROCESS_EXIT);
+}
+
+// Taken from the kernel headers directly
+#define AF_INET 2   /* Internet IP Protocol 	*/
+#define AF_INET6 10 /* IP version 6			*/
+
+#define swap16(x) ((x & 0xFF00) >> 8) | ((x & 0x00FF) << 8)
+#define swap32(x) ((x & 0xFF000000) >> 24) |    \
+                      ((x & 0x00FF0000) >> 8) | \
+                      ((x & 0x0000FF00) << 8) | \
+                      ((x & 0x000000FF) << 24)
+
+#ifdef __LITTLE_ENDIAN__
+#  define ntohs(x) swap16(x)
+#  define ntohl(x) swap32(x)
+#else
+#  define ntohs(x) x
+#  define ntohl(x) x
+#endif
+__always_inline static void submit_listening_event(struct metrics_by_hook_t* m,
+                                                   struct inet_sock* inet,
+                                                   uint16_t family) {
+  struct event_t* event = bpf_ringbuf_reserve(&rb, sizeof(struct event_t), 0);
+  if (event == NULL) {
+    m->ringbuffer_full++;
+    return;
+  }
+  const struct task_struct* task = bpf_get_current_task_btf();
+
+  event->common_data.listen.family = family;
+  event->common_data.listen.port = ntohs(BPF_CORE_READ(inet, inet_sport));
+  switch (family) {
+    case AF_INET: {
+      uint32_t addr = BPF_CORE_READ(inet, inet_saddr);
+      __builtin_memcpy(event->common_data.listen.address, &addr, 4);
+    } break;
+    case AF_INET6: {
+      uint32_t addr[4] = {0};
+      BPF_CORE_READ_INTO(&addr, inet, pinet6, saddr.in6_u.u6_addr32);
+      __builtin_memcpy(event->common_data.listen.address, &addr, 16);
+    } break;
+    default:
+      break;
+  }
+
+  process_fill(&event->process, task, true);
+
+  __submit_event(event, m, SOCKET_LISTEN);
 }

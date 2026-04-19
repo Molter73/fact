@@ -51,14 +51,24 @@ typedef enum fact_event_type_t {
   PROCESS_FORK,
   PROCESS_EXEC,
   PROCESS_EXIT,
+  SOCKET_LISTEN,
 } fact_event_type_t;
 
 struct event_t {
   unsigned long timestamp;
   process_t process;
-  char filename[PATH_MAX];
-  inode_key_t inode;
   fact_event_type_t type;
+  union {
+    struct {
+      char path[PATH_MAX];
+      inode_key_t inode;
+    } file;
+    struct {
+      unsigned short family;
+      unsigned char address[16];
+      unsigned short port;
+    } listen;
+  } common_data;
   union {
     struct {
       short unsigned int new;
@@ -110,4 +120,5 @@ struct metrics_t {
   struct metrics_by_hook_t sched_exec;
   struct metrics_by_hook_t sched_exit;
   struct metrics_by_hook_t iter_task;
+  struct metrics_by_hook_t socket_listen;
 };

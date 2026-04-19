@@ -243,6 +243,36 @@ error:
   return 0;
 }
 
+SEC("lsm/socket_listen")
+int BPF_PROG(trace_socket_listen, struct socket* socket, int backlog) {
+  struct metrics_t* m = get_metrics();
+  if (m == NULL) {
+    return 0;
+  }
+  m->socket_listen.total++;
+
+  if (socket->type != SOCK_STREAM && socket->type != SOCK_DGRAM) {
+    m->socket_listen.ignored++;
+    return 0;
+  }
+
+  struct sock* sk = socket->sk;
+  if (sk == NULL) {
+    m->socket_listen.ignored++;
+    return 0;
+  }
+  struct inet_sock* inet = (struct inet_sock*)sk;
+  uint16_t family = sk->__sk_common.skc_family;
+  if (family != AF_INET && family != AF_INET6) {
+    m->socket_listen.ignored++;
+    return 0;
+  }
+
+  submit_listening_event(&m->socket_listen, inet, family);
+
+  return 0;
+}
+
 #define PF_KTHREAD 0x00200000 /* I am a kernel thread */
 
 SEC("tp_btf/sched_process_fork")
