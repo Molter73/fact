@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+byteorder = "1.5.0"
 env_logger = { workspace = true }
 globset = { workspace = true }
 libc = { workspace = true }

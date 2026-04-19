@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package fact_api;
+
+import "fact-api/process.proto";
+
+option cc_enable_arenas = true;
+
+message Socket {
+  string address = 1;
+  uint32 port = 2;
+}
+
+message NetworkActivity {
+  Process process = 1;
+  oneof net {
+    Socket listen = 2;
+  }
+}

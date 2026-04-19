@@ -16,10 +16,14 @@ use fact_ebpf::{
     PATH_MAX, XATTR_NAME_MAX_LEN, event_t, fact_event_type_t, inode_key_t, monitored_t, process_t,
 };
 
-use crate::host_info;
+use crate::{
+    event::socket::{ListenData, SocketData},
+    host_info,
+};
 use process::Process;
 
 pub mod process;
+pub mod socket;
 
 fn slice_to_string(s: &[c_char]) -> anyhow::Result<String> {
     Ok(unsafe { CStr::from_ptr(s.as_ptr()) }.to_str()?.to_owned())
@@ -437,6 +441,7 @@ impl Event {
         match &self.data {
             File { file, .. } => file.event_type(),
             Process(proc) => proc.event_type(),
+            Socket { socket, .. } => socket.event_type(),
         }
     }
 
@@ -530,6 +535,10 @@ impl From<Event> for opentelemetry::logs::AnyValue {
             ) => {
                 map.insert("process".into(), proc.into());
             }
+            EventData::Socket { process, socket } => {
+                map.insert("socket".into(), socket.into());
+                map.insert("process".into(), process.into());
+            }
         }
 
         AnyValue::Map(Box::new(map))
@@ -544,8 +553,15 @@ impl PartialEq for Event {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum EventData {
-    File { process: Process, file: FileData },
+    File {
+        process: Process,
+        file: FileData,
+    },
     Process(ProcessData),
+    Socket {
+        process: Process,
+        socket: SocketData,
+    },
 }
 
 impl TryFrom<&event_t> for EventData {
@@ -572,10 +588,10 @@ impl TryFrom<&event_t> for EventData {
             | fact_event_type_t::FILE_ACTIVITY_SYMLINK => EventData::File {
                 file: FileData::new(
                     value.type_,
-                    value.filename,
-                    value.inode,
-                    value.parent_inode,
-                    value.monitored,
+                    unsafe { value.common_data.file.path },
+                    unsafe { value.common_data.file.inode },
+                    unsafe { value.common_data.file.parent_inode },
+                    unsafe { value.common_data.file.monitored },
                     value.__bindgen_anon_1,
                 )?,
                 process,
@@ -594,6 +610,11 @@ impl TryFrom<&event_t> for EventData {
                 let proc = Process::try_from(value.process)?;
                 let data = ProcessExitData(proc);
                 EventData::Process(ProcessData::Exit(data))
+            }
+            fact_event_type_t::SOCKET_LISTEN => {
+                let socket = ListenData::new(unsafe { value.common_data.listen });
+                let socket = SocketData::Listen(socket);
+                EventData::Socket { process, socket }
             }
             _ => unreachable!(),
         };
@@ -627,6 +648,13 @@ impl From<EventData> for fact_api::fact_msg::Msg {
                 };
                 fact_api::fact_msg::Msg::Process(activity)
             }
+            EventData::Socket { process, socket } => {
+                let activity = fact_api::NetworkActivity {
+                    process: Some(process.into()),
+                    net: Some(socket.into()),
+                };
+                fact_api::fact_msg::Msg::Net(activity)
+            }
         }
     }
 }
@@ -644,6 +672,13 @@ impl From<fact_api::fact_msg::Msg> for EventData {
             fact_api::fact_msg::Msg::Process(fact_api::ProcessActivity {
                 process: Some(proc),
             }) => EventData::Process(proc.into()),
+            fact_api::fact_msg::Msg::Net(fact_api::NetworkActivity {
+                process: Some(proc),
+                net: Some(net),
+            }) => EventData::Socket {
+                process: proc.into(),
+                socket: net.into(),
+            },
             _ => unreachable!("Invalid protobuf received"),
         }
     }
@@ -685,9 +720,9 @@ impl FileData {
         inode: inode_key_t,
         parent_inode: inode_key_t,
         monitored: monitored_t,
-        extra_data: fact_ebpf::event_t__bindgen_ty_1,
+        extra_data: fact_ebpf::event_t__bindgen_ty_2,
     ) -> anyhow::Result<Self> {
-        fn read_from_data(extra_data: fact_ebpf::event_t__bindgen_ty_1) -> BaseFileData {
+        fn read_from_data(extra_data: fact_ebpf::event_t__bindgen_ty_2) -> BaseFileData {
             let filename = unsafe { extra_data.from.filename };
             let inode = unsafe { extra_data.from.inode };
             let monitored = unsafe { extra_data.from.monitored };

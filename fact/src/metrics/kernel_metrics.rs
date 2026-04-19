@@ -79,4 +79,5 @@ define_kernel_metrics!(
     sched_exec,
     sched_exit,
     iter_task,
+    socket_listen,
 );

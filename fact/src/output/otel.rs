@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::bail;
-use fact_core::event::{EventData, ProcessData};
+use fact_core::event::{EventData, ProcessData, socket::SocketData};
 use log::{debug, info, warn};
 use opentelemetry::logs::{AnyValue, LogRecord, Logger, LoggerProvider, Severity};
 use opentelemetry_otlp::{LogExporter, WithExportConfig};
@@ -101,6 +101,7 @@ impl Client {
                                 EventData::Process(ProcessData::Exec(_)) => "Exec event".to_string(),
                                 EventData::Process(ProcessData::Exit(_)) => "Exit event".to_string(),
                                 EventData::Process(ProcessData::Proc(_)) => "Scrapped from /proc event".to_string(),
+                                EventData::Socket{socket: SocketData::Listen(_), ..} => "Socket listen event".to_string(),
                             };
                             record.set_body(body.into());
                             if let AnyValue::Map(map) = event.into() {
