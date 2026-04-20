@@ -273,6 +273,36 @@ int BPF_PROG(trace_socket_listen, struct socket* socket, int backlog) {
   return 0;
 }
 
+SEC("lsm/socket_accept")
+int BPF_PROG(trace_socket_accept, struct socket* sock, struct socket* newsock) {
+  struct metrics_t* m = get_metrics();
+  if (m == NULL) {
+    return 0;
+  }
+  m->socket_accept.total++;
+
+  if (sock->type != SOCK_STREAM && sock->type != SOCK_DGRAM) {
+    m->socket_accept.ignored++;
+    return 0;
+  }
+
+  struct sock* sk = sock->sk;
+  if (sk == NULL) {
+    m->socket_accept.ignored++;
+    return 0;
+  }
+  struct inet_sock* inet = (struct inet_sock*)sk;
+  uint16_t family = sk->__sk_common.skc_family;
+  if (family != AF_INET && family != AF_INET6) {
+    m->socket_accept.ignored++;
+    return 0;
+  }
+
+  submit_accept_event(&m->socket_accept, inet, family);
+
+  return 0;
+}
+
 #define PF_KTHREAD 0x00200000 /* I am a kernel thread */
 
 SEC("tp_btf/sched_process_fork")

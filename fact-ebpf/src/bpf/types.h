@@ -35,6 +35,11 @@ typedef struct inode_key_t {
   unsigned long dev;
 } inode_key_t;
 
+struct fact_socket_t {
+  unsigned char address[16];
+  unsigned short port;
+};
+
 // We can't use bool here because it is not a standard C type, we would
 // need to include vmlinux.h but that would explode our Rust bindings.
 // For the time being we just keep a char.
@@ -52,6 +57,7 @@ typedef enum fact_event_type_t {
   PROCESS_EXEC,
   PROCESS_EXIT,
   SOCKET_LISTEN,
+  SOCKET_ACCEPT,
 } fact_event_type_t;
 
 struct event_t {
@@ -65,9 +71,14 @@ struct event_t {
     } file;
     struct {
       unsigned short family;
-      unsigned char address[16];
-      unsigned short port;
-    } listen;
+      union {
+        struct fact_socket_t listen;
+        struct {
+          struct fact_socket_t local;
+          struct fact_socket_t remote;
+        } accept;
+      };
+    } network;
   } common_data;
   union {
     struct {
@@ -121,4 +132,5 @@ struct metrics_t {
   struct metrics_by_hook_t sched_exit;
   struct metrics_by_hook_t iter_task;
   struct metrics_by_hook_t socket_listen;
+  struct metrics_by_hook_t socket_accept;
 };

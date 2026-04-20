@@ -11,13 +11,13 @@ use serde::Serialize;
 use fact_ebpf::{PATH_MAX, event_t, fact_event_type_t, inode_key_t, process_t};
 
 use crate::{
-    event::socket::{ListenData, SocketData},
+    event::network::{AcceptData, ListenData, NetworkData},
     host_info,
 };
 use process::Process;
 
+mod network;
 pub mod process;
-mod socket;
 
 fn slice_to_string(s: &[c_char]) -> anyhow::Result<String> {
     Ok(unsafe { CStr::from_ptr(s.as_ptr()) }.to_str()?.to_owned())
@@ -161,7 +161,7 @@ impl Event {
                 file: FileData::Rename(data),
                 ..
             } => Some(&data.new.inode),
-            EventData::Process(_) | EventData::Socket { .. } => None,
+            EventData::Process(_) | EventData::Network { .. } => None,
         }
     }
 
@@ -208,7 +208,7 @@ impl Event {
                 file: FileData::Rename(data),
                 ..
             } => data.new.host_file = host_path,
-            EventData::Process(_) | EventData::Socket { .. } => {}
+            EventData::Process(_) | EventData::Network { .. } => {}
         }
     }
 
@@ -306,9 +306,9 @@ pub enum EventData {
         file: FileData,
     },
     Process(ProcessData),
-    Socket {
+    Network {
         process: Process,
-        socket: SocketData,
+        network: NetworkData,
     },
 }
 
@@ -348,9 +348,20 @@ impl TryFrom<&event_t> for EventData {
                 EventData::Process(ProcessData::Exit(data))
             }
             fact_event_type_t::SOCKET_LISTEN => {
-                let socket = ListenData::new(unsafe { value.common_data.listen });
-                let socket = SocketData::Listen(socket);
-                EventData::Socket { process, socket }
+                let socket = ListenData::new(unsafe { value.common_data.network });
+                let socket = NetworkData::Listen(socket);
+                EventData::Network {
+                    process,
+                    network: socket,
+                }
+            }
+            fact_event_type_t::SOCKET_ACCEPT => {
+                let data = AcceptData::new(unsafe { value.common_data.network });
+                let data = NetworkData::Accept(data);
+                EventData::Network {
+                    process,
+                    network: data,
+                }
             }
             _ => unreachable!(),
         };
@@ -384,7 +395,10 @@ impl From<EventData> for fact_api::fact_msg::Msg {
                 };
                 fact_api::fact_msg::Msg::Process(activity)
             }
-            EventData::Socket { process, socket } => {
+            EventData::Network {
+                process,
+                network: socket,
+            } => {
                 let activity = fact_api::NetworkActivity {
                     process: Some(process.into()),
                     net: Some(socket.into()),
@@ -411,9 +425,9 @@ impl From<fact_api::fact_msg::Msg> for EventData {
             fact_api::fact_msg::Msg::Net(fact_api::NetworkActivity {
                 process: Some(proc),
                 net: Some(net),
-            }) => EventData::Socket {
+            }) => EventData::Network {
                 process: proc.into(),
-                socket: net.into(),
+                network: net.into(),
             },
             _ => unreachable!("Invalid protobuf received"),
         }

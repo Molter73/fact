@@ -178,6 +178,7 @@ __always_inline static void submit_exit_event(struct metrics_by_hook_t* m,
 #  define ntohs(x) x
 #  define ntohl(x) x
 #endif
+
 __always_inline static void submit_listening_event(struct metrics_by_hook_t* m,
                                                    struct inet_sock* inet,
                                                    uint16_t family) {
@@ -188,17 +189,17 @@ __always_inline static void submit_listening_event(struct metrics_by_hook_t* m,
   }
   const struct task_struct* task = bpf_get_current_task_btf();
 
-  event->common_data.listen.family = family;
-  event->common_data.listen.port = ntohs(BPF_CORE_READ(inet, inet_sport));
+  event->common_data.network.family = family;
+  event->common_data.network.listen.port = ntohs(BPF_CORE_READ(inet, inet_sport));
   switch (family) {
     case AF_INET: {
       uint32_t addr = BPF_CORE_READ(inet, inet_saddr);
-      __builtin_memcpy(event->common_data.listen.address, &addr, 4);
+      __builtin_memcpy(event->common_data.network.listen.address, &addr, 4);
     } break;
     case AF_INET6: {
       uint32_t addr[4] = {0};
       BPF_CORE_READ_INTO(&addr, inet, pinet6, saddr.in6_u.u6_addr32);
-      __builtin_memcpy(event->common_data.listen.address, &addr, 16);
+      __builtin_memcpy(event->common_data.network.listen.address, &addr, 16);
     } break;
     default:
       break;
@@ -207,4 +208,41 @@ __always_inline static void submit_listening_event(struct metrics_by_hook_t* m,
   process_fill(&event->process, task, true);
 
   __submit_event(event, m, SOCKET_LISTEN);
+}
+
+__always_inline static void submit_accept_event(struct metrics_by_hook_t* m,
+                                                struct inet_sock* inet,
+                                                uint16_t family) {
+  struct event_t* event = bpf_ringbuf_reserve(&rb, sizeof(struct event_t), 0);
+  if (event == NULL) {
+    m->ringbuffer_full++;
+    return;
+  }
+  const struct task_struct* task = bpf_get_current_task_btf();
+
+  event->common_data.network.family = family;
+  event->common_data.network.accept.local.port = ntohs(BPF_CORE_READ(inet, inet_sport));
+  event->common_data.network.accept.remote.port = ntohs(BPF_CORE_READ(inet, sk.__sk_common.skc_dport));
+  switch (family) {
+    case AF_INET: {
+      uint32_t local_addr = BPF_CORE_READ(inet, inet_saddr);
+      uint32_t remote_addr = BPF_CORE_READ(inet, sk.__sk_common.skc_daddr);
+      __builtin_memcpy(event->common_data.network.accept.local.address, &local_addr, 4);
+      __builtin_memcpy(event->common_data.network.accept.remote.address, &remote_addr, 4);
+    } break;
+    case AF_INET6: {
+      uint32_t local_addr[4] = {0};
+      uint32_t remote_addr[4] = {0};
+      BPF_CORE_READ_INTO(&local_addr, inet, pinet6, saddr.in6_u.u6_addr32);
+      BPF_CORE_READ_INTO(&remote_addr, inet, sk.__sk_common.skc_v6_daddr);
+      __builtin_memcpy(event->common_data.network.accept.local.address, &local_addr, 16);
+      __builtin_memcpy(event->common_data.network.accept.remote.address, &remote_addr, 16);
+    } break;
+    default:
+      break;
+  }
+
+  process_fill(&event->process, task, true);
+
+  __submit_event(event, m, SOCKET_ACCEPT);
 }

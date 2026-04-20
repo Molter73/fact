@@ -18,6 +18,7 @@ pub struct KernelMetrics {
     sched_exit: EventCounter,
     iter_task: EventCounter,
     socket_listen: EventCounter,
+    socket_accept: EventCounter,
     map: PerCpuArray<MapData, metrics_t>,
 }
 
@@ -73,6 +74,11 @@ impl KernelMetrics {
             "Events processed by the socket_listen tracepoint",
             &[], // Labels are not needed since `collect` will add them all
         );
+        let socket_accept = EventCounter::new(
+            "kernel_socket_accept_events",
+            "Events processed by the socket_accept tracepoint",
+            &[], // Labels are not needed since `collect` will add them all
+        );
 
         file_open.register(reg);
         path_unlink.register(reg);
@@ -84,6 +90,7 @@ impl KernelMetrics {
         sched_exit.register(reg);
         iter_task.register(reg);
         socket_listen.register(reg);
+        socket_accept.register(reg);
 
         KernelMetrics {
             file_open,
@@ -96,6 +103,7 @@ impl KernelMetrics {
             sched_exit,
             iter_task,
             socket_listen,
+            socket_accept,
             map: kernel_metrics,
         }
     }
@@ -150,6 +158,7 @@ impl KernelMetrics {
         KernelMetrics::refresh_labels(&self.sched_exit, &metrics.sched_exit);
         KernelMetrics::refresh_labels(&self.iter_task, &metrics.iter_task);
         KernelMetrics::refresh_labels(&self.socket_listen, &metrics.socket_listen);
+        KernelMetrics::refresh_labels(&self.socket_accept, &metrics.socket_accept);
 
         Ok(())
     }
