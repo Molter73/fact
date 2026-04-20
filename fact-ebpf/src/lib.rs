@@ -117,6 +117,7 @@ impl metrics_t {
         self.iter_task = self.iter_task.accumulate(&other.iter_task);
         self.socket_listen = self.socket_listen.accumulate(&other.socket_listen);
         self.socket_accept = self.socket_accept.accumulate(&other.socket_accept);
+        self.socket_connect = self.socket_connect.accumulate(&other.socket_connect);
         self
     }
 }

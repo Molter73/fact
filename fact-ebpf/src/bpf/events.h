@@ -246,3 +246,47 @@ __always_inline static void submit_accept_event(struct metrics_by_hook_t* m,
 
   __submit_event(event, m, SOCKET_ACCEPT);
 }
+
+__always_inline static void submit_connect_event(struct metrics_by_hook_t* m,
+                                                 struct inet_sock* inet,
+                                                 uint16_t family,
+                                                 struct sockaddr* addr) {
+  struct event_t* event = bpf_ringbuf_reserve(&rb, sizeof(struct event_t), 0);
+  if (event == NULL) {
+    m->ringbuffer_full++;
+    return;
+  }
+  const struct task_struct* task = bpf_get_current_task_btf();
+
+  event->common_data.network.family = family;
+  event->common_data.network.connect.local.port = ntohs(BPF_CORE_READ(inet, inet_sport));
+  switch (family) {
+    case AF_INET: {
+      struct sockaddr_in* remote = (struct sockaddr_in*)addr;
+      event->common_data.network.connect.remote.port = ntohs(remote->sin_port);
+
+      uint32_t local_addr = BPF_CORE_READ(inet, inet_saddr);
+      uint32_t remote_addr = BPF_CORE_READ(remote, sin_addr.s_addr);
+      __builtin_memcpy(event->common_data.network.accept.local.address, &local_addr, 4);
+      __builtin_memcpy(event->common_data.network.accept.remote.address, &remote_addr, 4);
+    } break;
+    case AF_INET6: {
+      struct sockaddr_in6* remote = (struct sockaddr_in6*)addr;
+      uint32_t local_addr[4] = {0};
+      uint32_t remote_addr[4] = {0};
+
+      event->common_data.network.connect.remote.port = ntohs(remote->sin6_port);
+
+      BPF_CORE_READ_INTO(&local_addr, inet, pinet6, saddr.in6_u.u6_addr32);
+      BPF_CORE_READ_INTO(&remote_addr, remote, sin6_addr);
+      __builtin_memcpy(event->common_data.network.accept.local.address, &local_addr, 16);
+      __builtin_memcpy(event->common_data.network.accept.remote.address, &remote_addr, 16);
+    } break;
+    default:
+      break;
+  }
+
+  process_fill(&event->process, task, true);
+
+  __submit_event(event, m, SOCKET_CONNECT);
+}

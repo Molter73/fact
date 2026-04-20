@@ -19,6 +19,7 @@ pub struct KernelMetrics {
     iter_task: EventCounter,
     socket_listen: EventCounter,
     socket_accept: EventCounter,
+    socket_connect: EventCounter,
     map: PerCpuArray<MapData, metrics_t>,
 }
 
@@ -79,6 +80,11 @@ impl KernelMetrics {
             "Events processed by the socket_accept tracepoint",
             &[], // Labels are not needed since `collect` will add them all
         );
+        let socket_connect = EventCounter::new(
+            "kernel_socket_connect_events",
+            "Events processed by the socket_connect tracepoint",
+            &[], // Labels are not needed since `collect` will add them all
+        );
 
         file_open.register(reg);
         path_unlink.register(reg);
@@ -91,6 +97,7 @@ impl KernelMetrics {
         iter_task.register(reg);
         socket_listen.register(reg);
         socket_accept.register(reg);
+        socket_connect.register(reg);
 
         KernelMetrics {
             file_open,
@@ -104,6 +111,7 @@ impl KernelMetrics {
             iter_task,
             socket_listen,
             socket_accept,
+            socket_connect,
             map: kernel_metrics,
         }
     }
@@ -159,6 +167,7 @@ impl KernelMetrics {
         KernelMetrics::refresh_labels(&self.iter_task, &metrics.iter_task);
         KernelMetrics::refresh_labels(&self.socket_listen, &metrics.socket_listen);
         KernelMetrics::refresh_labels(&self.socket_accept, &metrics.socket_accept);
+        KernelMetrics::refresh_labels(&self.socket_connect, &metrics.socket_connect);
 
         Ok(())
     }

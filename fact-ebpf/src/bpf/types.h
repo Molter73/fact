@@ -58,6 +58,7 @@ typedef enum fact_event_type_t {
   PROCESS_EXIT,
   SOCKET_LISTEN,
   SOCKET_ACCEPT,
+  SOCKET_CONNECT,
 } fact_event_type_t;
 
 struct event_t {
@@ -76,7 +77,7 @@ struct event_t {
         struct {
           struct fact_socket_t local;
           struct fact_socket_t remote;
-        } accept;
+        } accept, connect;
       };
     } network;
   } common_data;
@@ -133,4 +134,5 @@ struct metrics_t {
   struct metrics_by_hook_t iter_task;
   struct metrics_by_hook_t socket_listen;
   struct metrics_by_hook_t socket_accept;
+  struct metrics_by_hook_t socket_connect;
 };
