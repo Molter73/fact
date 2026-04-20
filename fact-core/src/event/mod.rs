@@ -17,13 +17,13 @@ use fact_ebpf::{
 };
 
 use crate::{
-    event::socket::{ListenData, SocketData},
+    event::network::{AcceptData, ListenData, NetworkData},
     host_info,
 };
 use process::Process;
 
+pub mod network;
 pub mod process;
-pub mod socket;
 
 fn slice_to_string(s: &[c_char]) -> anyhow::Result<String> {
     Ok(unsafe { CStr::from_ptr(s.as_ptr()) }.to_str()?.to_owned())
@@ -441,7 +441,7 @@ impl Event {
         match &self.data {
             File { file, .. } => file.event_type(),
             Process(proc) => proc.event_type(),
-            Socket { socket, .. } => socket.event_type(),
+            Network { network, .. } => network.event_type(),
         }
     }
 
@@ -535,8 +535,8 @@ impl From<Event> for opentelemetry::logs::AnyValue {
             ) => {
                 map.insert("process".into(), proc.into());
             }
-            EventData::Socket { process, socket } => {
-                map.insert("socket".into(), socket.into());
+            EventData::Network { process, network } => {
+                map.insert("network".into(), network.into());
                 map.insert("process".into(), process.into());
             }
         }
@@ -558,9 +558,9 @@ pub enum EventData {
         file: FileData,
     },
     Process(ProcessData),
-    Socket {
+    Network {
         process: Process,
-        socket: SocketData,
+        network: NetworkData,
     },
 }
 
@@ -612,9 +612,20 @@ impl TryFrom<&event_t> for EventData {
                 EventData::Process(ProcessData::Exit(data))
             }
             fact_event_type_t::SOCKET_LISTEN => {
-                let socket = ListenData::new(unsafe { value.common_data.listen });
-                let socket = SocketData::Listen(socket);
-                EventData::Socket { process, socket }
+                let socket = ListenData::new(unsafe { value.common_data.network });
+                let socket = NetworkData::Listen(socket);
+                EventData::Network {
+                    process,
+                    network: socket,
+                }
+            }
+            fact_event_type_t::SOCKET_ACCEPT => {
+                let data = AcceptData::new(unsafe { value.common_data.network });
+                let data = NetworkData::Accept(data);
+                EventData::Network {
+                    process,
+                    network: data,
+                }
             }
             _ => unreachable!(),
         };
@@ -648,7 +659,10 @@ impl From<EventData> for fact_api::fact_msg::Msg {
                 };
                 fact_api::fact_msg::Msg::Process(activity)
             }
-            EventData::Socket { process, socket } => {
+            EventData::Network {
+                process,
+                network: socket,
+            } => {
                 let activity = fact_api::NetworkActivity {
                     process: Some(process.into()),
                     net: Some(socket.into()),
@@ -675,9 +689,9 @@ impl From<fact_api::fact_msg::Msg> for EventData {
             fact_api::fact_msg::Msg::Net(fact_api::NetworkActivity {
                 process: Some(proc),
                 net: Some(net),
-            }) => EventData::Socket {
+            }) => EventData::Network {
                 process: proc.into(),
-                socket: net.into(),
+                network: net.into(),
             },
             _ => unreachable!("Invalid protobuf received"),
         }

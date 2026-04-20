@@ -291,6 +291,7 @@ impl_metrics_t!(
     sched_exit,
     iter_task,
     socket_listen,
+    socket_accept,
 );
 
 unsafe impl Pod for metrics_t {}

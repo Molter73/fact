@@ -11,9 +11,15 @@ message Socket {
   uint32 port = 2;
 }
 
+message Accept {
+  Socket local = 1;
+  Socket remote = 2;
+}
+
 message NetworkActivity {
   Process process = 1;
   oneof net {
     Socket listen = 2;
+    Accept accept = 3;
   }
 }
