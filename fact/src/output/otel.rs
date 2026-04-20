@@ -103,6 +103,7 @@ impl Client {
                                 EventData::Process(ProcessData::Proc(_)) => "Scrapped from /proc event".to_string(),
                                 EventData::Network{network: NetworkData::Listen(_), ..} => "Network listen event".to_string(),
                                 EventData::Network{network: NetworkData::Accept(_), ..} => "Network accept event".to_string(),
+                                EventData::Network{network: NetworkData::Connect(_), ..} => "Network connect event".to_string(),
                             };
                             record.set_body(body.into());
                             if let AnyValue::Map(map) = event.into() {

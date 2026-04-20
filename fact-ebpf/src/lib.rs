@@ -292,6 +292,7 @@ impl_metrics_t!(
     iter_task,
     socket_listen,
     socket_accept,
+    socket_connect,
 );
 
 unsafe impl Pod for metrics_t {}

@@ -81,4 +81,5 @@ define_kernel_metrics!(
     iter_task,
     socket_listen,
     socket_accept,
+    socket_connect,
 );

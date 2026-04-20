@@ -7,14 +7,15 @@ use opentelemetry::logs::AnyValue;
 use std::net::IpAddr;
 
 use byteorder::{ByteOrder, NetworkEndian};
-use fact_ebpf::{event_t__bindgen_ty_1__bindgen_ty_2, fact_socket_t};
+use fact_ebpf::{event_t__bindgen_ty_1__bindgen_ty_2__bindgen_ty_1__bindgen_ty_1, fact_socket_t};
 use libc::AF_INET;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum NetworkData {
-    Accept(AcceptData),
-    Listen(ListenData),
+    Accept(SocketTuple),
+    Connect(SocketTuple),
+    Listen(SocketData),
 }
 
 impl NetworkData {
@@ -23,6 +24,7 @@ impl NetworkData {
         match self {
             Listen(_) => "listen",
             Accept(_) => "accept",
+            Connect(_) => "connect",
         }
     }
 }
@@ -30,10 +32,9 @@ impl NetworkData {
 impl From<NetworkData> for fact_api::network_activity::Net {
     fn from(value: NetworkData) -> Self {
         match value {
-            NetworkData::Listen(ListenData(sock)) => {
-                fact_api::network_activity::Net::Listen(sock.into())
-            }
-            NetworkData::Accept(data) => fact_api::network_activity::Net::Accept(data.into()),
+            NetworkData::Listen(sock) => fact_api::network_activity::Net::Listen(sock.into()),
+            NetworkData::Accept(tuple) => fact_api::network_activity::Net::Accept(tuple.into()),
+            NetworkData::Connect(tuple) => fact_api::network_activity::Net::Connect(tuple.into()),
         }
     }
 }
@@ -41,10 +42,9 @@ impl From<NetworkData> for fact_api::network_activity::Net {
 impl From<fact_api::network_activity::Net> for NetworkData {
     fn from(value: fact_api::network_activity::Net) -> Self {
         match value {
-            fact_api::network_activity::Net::Listen(sock) => {
-                NetworkData::Listen(ListenData(sock.into()))
-            }
-            fact_api::network_activity::Net::Accept(data) => NetworkData::Accept(data.into()),
+            fact_api::network_activity::Net::Listen(sock) => NetworkData::Listen(sock.into()),
+            fact_api::network_activity::Net::Accept(tuple) => NetworkData::Accept(tuple.into()),
+            fact_api::network_activity::Net::Connect(tuple) => NetworkData::Connect(tuple.into()),
         }
     }
 }
@@ -54,8 +54,8 @@ impl From<NetworkData> for opentelemetry::logs::AnyValue {
     fn from(value: NetworkData) -> Self {
         use NetworkData::*;
         match value {
-            Listen(listen) => listen.into(),
-            Accept(accept) => accept.into(),
+            Listen(socket) => socket.into(),
+            Accept(tuple) | Connect(tuple) => tuple.into(),
         }
     }
 }
@@ -67,7 +67,7 @@ pub struct SocketData {
 }
 
 impl SocketData {
-    fn new(data: fact_socket_t, family: u16) -> Self {
+    pub(super) fn new(data: fact_socket_t, family: u16) -> Self {
         let addr = if family == AF_INET as u16 {
             let addr = NetworkEndian::read_u32(&data.address);
             IpAddr::V4(addr.into())
@@ -114,49 +114,35 @@ impl From<SocketData> for opentelemetry::logs::AnyValue {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ListenData(SocketData);
-
-impl ListenData {
-    pub(super) fn new(data: event_t__bindgen_ty_1__bindgen_ty_2) -> Self {
-        let sock = SocketData::new(unsafe { data.__bindgen_anon_1.listen }, data.family);
-        ListenData(sock)
-    }
-}
-
-#[cfg(feature = "otel")]
-impl From<ListenData> for opentelemetry::logs::AnyValue {
-    fn from(value: ListenData) -> Self {
-        AnyValue::Map(Box::new(HashMap::from([("socket".into(), value.0.into())])))
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct AcceptData {
+pub struct SocketTuple {
     local: SocketData,
     remote: SocketData,
 }
 
-impl AcceptData {
-    pub(super) fn new(data: event_t__bindgen_ty_1__bindgen_ty_2) -> Self {
-        let local = SocketData::new(unsafe { data.__bindgen_anon_1.accept.local }, data.family);
-        let remote = SocketData::new(unsafe { data.__bindgen_anon_1.accept.remote }, data.family);
+impl SocketTuple {
+    pub(super) fn new(
+        data: event_t__bindgen_ty_1__bindgen_ty_2__bindgen_ty_1__bindgen_ty_1,
+        family: u16,
+    ) -> Self {
+        let local = SocketData::new(data.local, family);
+        let remote = SocketData::new(data.remote, family);
 
-        AcceptData { local, remote }
+        SocketTuple { local, remote }
     }
 }
 
-impl From<AcceptData> for fact_api::Accept {
-    fn from(AcceptData { local, remote }: AcceptData) -> Self {
-        fact_api::Accept {
+impl From<SocketTuple> for fact_api::SocketTuple {
+    fn from(SocketTuple { local, remote }: SocketTuple) -> Self {
+        fact_api::SocketTuple {
             local: Some(local.into()),
             remote: Some(remote.into()),
         }
     }
 }
 
-impl From<fact_api::Accept> for AcceptData {
-    fn from(value: fact_api::Accept) -> Self {
-        let fact_api::Accept {
+impl From<fact_api::SocketTuple> for SocketTuple {
+    fn from(value: fact_api::SocketTuple) -> Self {
+        let fact_api::SocketTuple {
             local: Some(local),
             remote: Some(remote),
         } = value
@@ -164,7 +150,7 @@ impl From<fact_api::Accept> for AcceptData {
             unreachable!("Invalid accept message");
         };
 
-        AcceptData {
+        SocketTuple {
             local: local.into(),
             remote: remote.into(),
         }
@@ -172,8 +158,8 @@ impl From<fact_api::Accept> for AcceptData {
 }
 
 #[cfg(feature = "otel")]
-impl From<AcceptData> for opentelemetry::logs::AnyValue {
-    fn from(value: AcceptData) -> Self {
+impl From<SocketTuple> for opentelemetry::logs::AnyValue {
+    fn from(value: SocketTuple) -> Self {
         AnyValue::Map(Box::new(HashMap::from([
             ("local".into(), value.local.into()),
             ("remote".into(), value.remote.into()),

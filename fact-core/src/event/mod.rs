@@ -17,7 +17,7 @@ use fact_ebpf::{
 };
 
 use crate::{
-    event::network::{AcceptData, ListenData, NetworkData},
+    event::network::{NetworkData, SocketData, SocketTuple},
     host_info,
 };
 use process::Process;
@@ -612,7 +612,10 @@ impl TryFrom<&event_t> for EventData {
                 EventData::Process(ProcessData::Exit(data))
             }
             fact_event_type_t::SOCKET_LISTEN => {
-                let socket = ListenData::new(unsafe { value.common_data.network });
+                let socket = SocketData::new(
+                    unsafe { value.common_data.network.__bindgen_anon_1.listen },
+                    unsafe { value.common_data.network.family },
+                );
                 let socket = NetworkData::Listen(socket);
                 EventData::Network {
                     process,
@@ -620,8 +623,22 @@ impl TryFrom<&event_t> for EventData {
                 }
             }
             fact_event_type_t::SOCKET_ACCEPT => {
-                let data = AcceptData::new(unsafe { value.common_data.network });
+                let data = SocketTuple::new(
+                    unsafe { value.common_data.network.__bindgen_anon_1.accept },
+                    unsafe { value.common_data.network.family },
+                );
                 let data = NetworkData::Accept(data);
+                EventData::Network {
+                    process,
+                    network: data,
+                }
+            }
+            fact_event_type_t::SOCKET_CONNECT => {
+                let data = SocketTuple::new(
+                    unsafe { value.common_data.network.__bindgen_anon_1.connect },
+                    unsafe { value.common_data.network.family },
+                );
+                let data = NetworkData::Connect(data);
                 EventData::Network {
                     process,
                     network: data,
