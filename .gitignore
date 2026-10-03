@@ -35,3 +35,6 @@ compile_commands.json
 
 # Env files
 .env
+
+# Vagrant
+.vagrant/

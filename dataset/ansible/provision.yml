@@ -1,0 +1,22 @@
+---
+- name: Provision VM
+  hosts: all
+  become: true
+  roles:
+    - role: growpart
+    - role: install-deps
+    - role: mariadb
+    - role: redis
+    - role: nginx
+    - role: php-fpm
+    - role: wordpress
+    - role: fact
+
+  tasks:
+    - name: Copy scripts
+      ansible.builtin.copy:
+        src: "{{ playbook_dir | dirname }}/scripts"
+        dest: /opt/
+        mode: '0755'
+        owner: vagrant
+        group: vagrant

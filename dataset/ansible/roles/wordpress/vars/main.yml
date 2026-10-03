@@ -1,0 +1,6 @@
+wp_site_title: "Dataset Test Site"
+wp_admin_user: "datasetadmin"
+wp_admin_pass: "DatasetAdmin!2024"
+wp_admin_email: "admin@dataset.local"
+wp_url: "http://10.10.0.10"
+traffic_dir: /opt/dataset-traffic

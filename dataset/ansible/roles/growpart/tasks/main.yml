@@ -1,0 +1,11 @@
+- name: Install growpart
+  ansible.builtin.dnf:
+    name:
+      - cloud-utils-growpart
+    state: latest
+
+- name: Grow partition
+  ansible.builtin.shell: growpart /dev/vda 3 || true
+
+- name: Resize filesystem
+  ansible.builtin.command: btrfs filesystem resize max /

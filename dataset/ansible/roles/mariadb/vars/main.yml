@@ -1,0 +1,5 @@
+mariadb_root_pass: "r00t_S3cur3!"
+wp_db_name: wordpress
+wp_db_user: wordpress
+wp_db_pass: "wp_Str0ng!Pass"
+wp_db_host: 127.0.0.1

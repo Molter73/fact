@@ -1,5 +1,5 @@
 use fact_core::event::Event;
-use log::warn;
+use log::{debug, warn};
 use tokio_stream::StreamExt;
 
 use crate::db::FactDb;
@@ -15,6 +15,7 @@ impl fact_api::fact_service_server::FactService for FactServer {
         &self,
         request: tonic::Request<tonic::Streaming<fact_api::FactMsg>>,
     ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
+        debug!("New connection from {:?}", request.remote_addr());
         let mut stream = request.into_inner();
         while let Some(res) = stream.next().await {
             match res {

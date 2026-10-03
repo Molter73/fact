@@ -1,0 +1,37 @@
+- name: Install PHP-FPM packages
+  ansible.builtin.dnf:
+    name:
+      - php-fpm
+      - php-mysqlnd
+      - php-json
+      - php-xml
+      - php-mbstring
+      - php-gd
+      - php-curl
+      - php-zip
+      - php-intl
+      - php-opcache
+      - php-cli
+      - php-pdo
+    state: present
+
+- name: Deploy PHP-FPM pool configuration
+  ansible.builtin.template:
+    src: php-fpm-www.conf.j2
+    dest: /etc/php-fpm.d/www.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart php-fpm
+
+- name: Allow PHP-FPM to connect to MariaDB
+  ansible.posix.seboolean:
+    name: httpd_can_network_connect_db
+    persistent: true
+    state: true
+
+- name: Enable and start PHP-FPM
+  ansible.builtin.systemd:
+    name: php-fpm
+    state: started
+    enabled: true

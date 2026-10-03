@@ -4,6 +4,7 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-root}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-password}
+      GLIBC_TUNABLES: glibc.pthread.rseq=1 # Needed on 6.19 kernels until properly supported by mongodb
     volumes:
       - db-data:/data/db
 
@@ -25,6 +26,8 @@ services:
     environment:
       FACT_LOGLEVEL: debug
       FACT_COMPENDIUM_DB_URL: mongodb://${MONGO_INITDB_ROOT_USERNAME:-root}:${MONGO_INITDB_ROOT_PASSWORD:-password}@db:27017
+    ports:
+    - 8080:8080
     depends_on:
       - db
 
@@ -49,6 +52,7 @@ services:
         read_only: true
         type: bind
     privileged: true
+    profiles: ["agent"]
 
 volumes:
   db-data:

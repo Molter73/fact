@@ -1,0 +1,32 @@
+Vagrant.configure('2') do |c|
+  c.vm.define 'tfg', primary: true do |tfg|
+    tfg.vm.box = 'fedora/44'
+    tfg.vm.box_url = 'https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-Base-Vagrant-libvirt-44-1.7.x86_64.vagrant.libvirt.box'
+    tfg.vm.box_download_checksum = '4695d5ef2bfcc882649b98de0c545d04671d2064f6609e7e68e606718c8333dc'
+    tfg.vm.box_download_checksum_type = 'sha256'
+
+    tfg.vm.hostname = 'tfg'
+
+    # If running on a system with firewalld, remember to edit the
+    # libvirt zone to allow for port 8080 (used by compendium).
+    # vagrant-libvirt only attaches the interface, it never configures the
+    # guest side, so the address has to come from DHCP. Pin the range to a
+    # single address to always hand out 10.10.0.10.
+    tfg.vm.network 'private_network', ip: '10.10.0.10',
+      libvirt__network_name: 'tfg_managed',
+      libvirt__host_ip: '10.10.0.1',
+      libvirt__dhcp_start: '10.10.0.10',
+      libvirt__dhcp_stop: '10.10.0.10'
+
+    tfg.vm.provider 'libvirt' do |libvirt|
+      libvirt.cpus = 4
+      libvirt.memory = 8192
+      libvirt.memorybacking :access, :mode => 'shared'
+      libvirt.machine_virtual_size = 20
+    end
+
+    tfg.vm.provision 'install-deps', type: 'ansible' do |ansible|
+      ansible.playbook = 'ansible/provision.yml'
+    end
+  end
+end

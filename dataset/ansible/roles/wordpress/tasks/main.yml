@@ -1,0 +1,76 @@
+- name: Install WordPress packages
+  ansible.builtin.dnf:
+    name:
+      - wordpress
+      - wp-cli
+    state: present
+
+- name: Deploy wp-config.php
+  ansible.builtin.template:
+    src: wp-config.php.j2
+    dest: "{{ wp_dir }}/wp-config.php"
+    mode: "0644"
+
+- name: Ensure WordPress directory ownership
+  ansible.builtin.file:
+    path: "{{ wp_dir }}"
+    recurse: true
+    state: directory
+
+- name: Install WordPress via WP-CLI
+  ansible.builtin.command:
+    cmd: |
+      wp core install
+        --url="{{ wp_url }}"
+        --title="{{ wp_site_title }}"
+        --admin_user="{{ wp_admin_user }}"
+        --admin_password="{{ wp_admin_pass }}"
+        --admin_email="{{ wp_admin_email }}"
+    chdir: "{{ wp_dir }}"
+    creates: "{{ wp_dir }}/.wp-installed"
+
+- name: Create sample posts via WP-CLI
+  ansible.builtin.command:
+    cmd: |
+      wp post create
+        --post_title="Sample Post {{ item }}"
+        --post_content="This is sample post {{ item }} with realistic content for system activity dataset generation."
+        --post_status=publish
+    chdir: "{{ wp_dir }}"
+  loop:
+    - "Welcome to the Dataset Site"
+    - "Getting Started with System Activity Monitoring"
+    - "Understanding File Access Patterns"
+    - "Network Activity Analysis Overview"
+    - "Process Behavior and Anomaly Detection"
+  register: wp_posts
+  changed_when: "'Success' in wp_posts.stdout"
+
+- name: Create sample pages via WP-CLI
+  ansible.builtin.command:
+    cmd: |
+      wp post create
+        --post_type=page
+        --post_title="{{ item.title }}"
+        --post_content="{{ item.content }}"
+        --post_status=publish
+    chdir: "{{ wp_dir }}"
+  loop:
+    - title: About
+      content: "This site generates system activity for anomaly detection dataset research."
+    - title: Contact
+      content: "Contact the research team for dataset methodology details."
+  register: wp_pages
+  changed_when: "'Success' in wp_pages.stdout"
+
+- name: Set pretty permalinks
+  ansible.builtin.command:
+    cmd: wp rewrite structure '/%postname%/'
+    chdir: "{{ wp_dir }}"
+
+- name: Ensure WordPress directory ownership
+  ansible.builtin.file:
+    path: "{{ wp_dir }}"
+    owner: nginx
+    group: nginx
+    recurse: true
