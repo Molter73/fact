@@ -42,6 +42,11 @@ __always_inline static void __submit_event(struct submit_event_args_t* args) {
 __always_inline static void __submit_file_event(struct submit_event_args_t* args,
                                                 bool use_bpf_d_path) {
   struct event_t* event = args->event;
+  const process_fill_opts_t opts = {
+      .use_bpf_d_path = use_bpf_d_path,
+      .use_get_task_exe_file = true,
+      .is_sleepable = false,
+  };
   event->timestamp = bpf_ktime_get_boot_ns();
   event->common_data.file.monitored = args->monitored;
   inode_copy(&event->common_data.file.inode, &args->inode);
@@ -58,7 +63,7 @@ __always_inline static void __submit_file_event(struct submit_event_args_t* args
   }
 
   struct task_struct* task = bpf_get_current_task_btf();
-  int64_t err = process_fill(&event->process, task, use_bpf_d_path, true);
+  int64_t err = process_fill(&event->process, task, &opts);
   if (err) {
     bpf_printk("Failed to fill process information: %d", err);
     goto error;
@@ -280,12 +285,17 @@ __always_inline static void submit_symlink_event(struct submit_event_args_t* arg
 __always_inline static void __submit_process_event(struct submit_event_args_t* args,
                                                    struct task_struct* task,
                                                    fact_event_type_t type) {
+  static const process_fill_opts_t opts = {
+      .use_bpf_d_path = false,
+      .use_get_task_exe_file = false,
+      .is_sleepable = false,
+  };
   if (!reserve_event(args)) {
     return;
   }
 
   args->event->type = type;
-  process_fill(&args->event->process, task, false, false);
+  process_fill(&args->event->process, task, &opts);
 
   __submit_event(args);
 }
@@ -326,6 +336,12 @@ __always_inline static void submit_exit_event(struct submit_event_args_t* args,
 __always_inline static void submit_listening_event(struct submit_event_args_t* args,
                                                    struct inet_sock* inet,
                                                    uint16_t family) {
+  static const process_fill_opts_t opts = {
+      .use_bpf_d_path = true,
+      .use_get_task_exe_file = true,
+      .is_sleepable = false,
+  };
+
   if (!reserve_event(args)) {
     return;
   }
@@ -349,7 +365,7 @@ __always_inline static void submit_listening_event(struct submit_event_args_t* a
       break;
   }
 
-  process_fill(&event->process, task, true, true);
+  process_fill(&event->process, task, &opts);
 
   __submit_event(args);
 }
@@ -357,6 +373,11 @@ __always_inline static void submit_listening_event(struct submit_event_args_t* a
 __always_inline static void submit_accept_event(struct submit_event_args_t* args,
                                                 struct inet_sock* inet,
                                                 uint16_t family) {
+  static const process_fill_opts_t opts = {
+      .use_bpf_d_path = true,
+      .use_get_task_exe_file = true,
+      .is_sleepable = false,
+  };
   if (!reserve_event(args)) {
     return;
   }
@@ -386,7 +407,7 @@ __always_inline static void submit_accept_event(struct submit_event_args_t* args
       break;
   }
 
-  process_fill(&event->process, task, true, true);
+  process_fill(&event->process, task, &opts);
 
   __submit_event(args);
 }
@@ -395,6 +416,11 @@ __always_inline static void submit_connect_event(struct submit_event_args_t* arg
                                                  struct inet_sock* inet,
                                                  uint16_t family,
                                                  struct sockaddr* addr) {
+  static const process_fill_opts_t opts = {
+      .use_bpf_d_path = true,
+      .use_get_task_exe_file = true,
+      .is_sleepable = false,
+  };
   if (!reserve_event(args)) {
     return;
   }
@@ -430,7 +456,7 @@ __always_inline static void submit_connect_event(struct submit_event_args_t* arg
       break;
   }
 
-  process_fill(&event->process, task, true, true);
+  process_fill(&event->process, task, &opts);
 
   __submit_event(args);
 }

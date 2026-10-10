@@ -14,6 +14,12 @@
 
 volatile const pid_t monitored_pid = 0;
 
+typedef struct process_fill_opts_t {
+  bool use_bpf_d_path;
+  bool use_get_task_exe_file;
+  bool is_sleepable;
+} process_fill_opts_t;
+
 /**
  * Check if the process is to be monitored.
  *
@@ -99,16 +105,16 @@ __always_inline static const char* get_memory_cgroup(struct helper_t* helper, co
   return helper->buf;
 }
 
-__always_inline static long read_exe_file(struct task_struct* task, char buf[PATH_MAX], bool use_bpf_d_path, bool use_get_task_exe_file) {
-  if (bpf_ksym_exists(bpf_get_task_exe_file) && use_get_task_exe_file) {
+__always_inline static long read_exe_file(struct task_struct* task, char buf[PATH_MAX], const process_fill_opts_t* opts) {
+  if (bpf_ksym_exists(bpf_get_task_exe_file) && opts->use_get_task_exe_file) {
     long res = -1;
     struct file* exe_file = bpf_get_task_exe_file(task);
     if (exe_file != NULL) {
-      res = d_path(&exe_file->f_path, buf, PATH_MAX, use_bpf_d_path);
+      res = d_path(&exe_file->f_path, buf, PATH_MAX, opts->use_bpf_d_path);
       bpf_put_file(exe_file);
     }
     return res;
-  } else if (use_bpf_d_path) {
+  } else if (opts->use_bpf_d_path) {
     return bpf_d_path(&task->mm->exe_file->f_path, buf, PATH_MAX);
   } else {
     return __d_path(&task->mm->exe_file->f_path, buf, PATH_MAX);
@@ -119,7 +125,7 @@ __always_inline static unsigned long get_mount_ns(const struct task_struct* task
   return task->nsproxy->mnt_ns->ns.inum;
 }
 
-__always_inline static int64_t process_fill(process_t* p, struct task_struct* task, bool use_bpf_d_path, bool use_get_task_exe_file) {
+__always_inline static int64_t process_fill(process_t* p, struct task_struct* task, const process_fill_opts_t* opts) {
   uint32_t key = 0;
   p->uid = task->cred->uid.val;
   p->gid = task->cred->gid.val;
@@ -133,17 +139,19 @@ __always_inline static int64_t process_fill(process_t* p, struct task_struct* ta
     return err;
   }
 
-  /* TODO: figure out if arguments are needed. If so, fix the iterator
   unsigned long arg_start = task->mm->arg_start;
   unsigned long arg_end = task->mm->arg_end;
   p->args_len = (arg_end - arg_start) & 0xFFF;
   p->args[4095] = '\0';  // Ensure string termination at end of buffer
-  err = bpf_probe_read_user(p->args, p->args_len, (const char*)arg_start);
+  if (!opts->is_sleepable) {
+    err = bpf_probe_read_user(p->args, p->args_len, (const char*)arg_start);
+  } else {
+    err = bpf_copy_from_user_task(p->args, p->args_len, (const char*)arg_start, (struct task_struct*)task, 0);
+  }
   if (err != 0) {
     bpf_printk("Failed to fill task args");
     return err;
   }
-  */
 
   struct helper_t* helper = bpf_map_lookup_elem(&helper_map, &key);
   if (helper == NULL) {
@@ -151,7 +159,7 @@ __always_inline static int64_t process_fill(process_t* p, struct task_struct* ta
     return -1;
   }
 
-  read_exe_file(task, p->exe_path, use_bpf_d_path, use_get_task_exe_file);
+  read_exe_file(task, p->exe_path, opts);
 
   const char* cg = get_memory_cgroup(helper, task);
   if (cg != NULL) {

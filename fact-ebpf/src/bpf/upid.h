@@ -10,20 +10,24 @@
 
 __always_inline static uint64_t get_upid(const struct task_struct* task) {
   static uint64_t global_upid = 1;
+  uint64_t upid_id = 0;
 
   // The upid is always assigned to the group_leader
-  struct task_struct* group_leader = task->group_leader;
+  bpf_rcu_read_lock();
+  struct task_struct* group_leader = bpf_task_acquire(task->group_leader);
+  bpf_rcu_read_unlock();
   if (group_leader == NULL) {
-    return 0;
+    goto end;
   }
 
   struct upid_t* upid = bpf_task_storage_get(&task_upid_map, group_leader, NULL, BPF_LOCAL_STORAGE_GET_F_CREATE);
   if (upid == NULL) {
-    return 0;
+    goto end;
   }
 
   if (upid->id != 0) {
-    return upid->id;
+    upid_id = upid->id;
+    goto end;
   }
 
   bpf_spin_lock(&upid->semaphore);
@@ -32,15 +36,29 @@ __always_inline static uint64_t get_upid(const struct task_struct* task) {
     upid->id = __sync_fetch_and_add(&global_upid, 1);
   }
   bpf_spin_unlock(&upid->semaphore);
+  upid_id = upid->id;
 
-  return upid->id;
+end:
+  if (group_leader != NULL) {
+    bpf_task_release(group_leader);
+  }
+  return upid_id;
 }
 
 __always_inline static uint64_t get_parent_upid(const struct task_struct* task) {
-  struct task_struct* parent = task->real_parent;
+  uint64_t upid = 0;
+  bpf_rcu_read_lock();
+  struct task_struct* parent = bpf_task_acquire(task->real_parent);
+  bpf_rcu_read_unlock();
   if (parent == NULL) {
-    return 0;
+    goto cleanup;
   }
 
-  return get_upid(parent);
+  upid = get_upid(parent);
+
+cleanup:
+  if (parent != NULL) {
+    bpf_task_release(parent);
+  }
+  return upid;
 }

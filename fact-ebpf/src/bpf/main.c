@@ -22,6 +22,8 @@ char _license[] SEC("license") = "Dual MIT/GPL";
 #define FMODE_PWRITE ((fmode_t)(1 << 4))
 #define FMODE_CREATED ((fmode_t)(1 << 20))
 
+#define PF_KTHREAD 0x00200000 /* I am a kernel thread */
+
 #define STRINGIFY(a) STR(a)
 #define STR(a) #a
 
@@ -810,8 +812,6 @@ int BPF_PROG(trace_socket_connect, struct socket* sock, struct sockaddr* addr, i
   return 0;
 }
 
-#define PF_KTHREAD 0x00200000 /* I am a kernel thread */
-
 SEC("tp_btf/sched_process_fork")
 int BPF_PROG(trace_sched_process_fork, struct task_struct* parent, struct task_struct* child) {
   struct metrics_t* m = get_metrics();
@@ -875,28 +875,47 @@ int BPF_PROG(trace_sched_process_exit, struct task_struct* task, bool group_dead
   return 0;
 }
 
-SEC("iter/task")
+SEC("iter.s/task")
 int iter_task(struct bpf_iter__task* ctx) {
+  static const process_fill_opts_t opts = {
+      .use_bpf_d_path = false,
+      .use_get_task_exe_file = false,
+      .is_sleepable = true,
+  };
   struct seq_file* seq = ctx->meta->seq;
-  struct task_struct* task = ctx->task;
-
-  // Stop condition
-  if (task == NULL) {
-    return 0;
-  }
-
+  struct task_struct* ctx_task = ctx->task;
+  struct task_struct* group_leader = NULL;
   struct metrics_t* m = get_metrics();
   if (m == NULL) {
     return 0;
   }
 
+  // Stop condition
+  if (ctx_task == NULL) {
+    return 0;
+  }
+
+  bpf_rcu_read_lock();
+  struct task_struct* task = bpf_task_acquire(ctx_task);
+  bpf_rcu_read_unlock();
+  if (task == NULL) {
+    goto error;
+  }
+
   m->iter_task.total++;
 
+  bpf_rcu_read_lock();
+  group_leader = bpf_task_acquire(task->group_leader);
+  bpf_rcu_read_unlock();
+  if (group_leader == NULL) {
+    goto error;
+  }
+
   if ((task->flags & PF_KTHREAD) != 0 ||
-      task != task->group_leader ||
+      task != group_leader ||
       !process_is_monitored(task)) {
     m->iter_task.ignored++;
-    return 0;
+    goto cleanup;
   }
 
   struct helper_t* helper = get_helper();
@@ -904,7 +923,7 @@ int iter_task(struct bpf_iter__task* ctx) {
     goto error;
   }
 
-  int64_t err = process_fill(&helper->process, task, true, false);
+  int64_t err = process_fill(&helper->process, task, &opts);
   if (err != 0) {
     bpf_printk("Iter: failed to fill process info: %d", err);
     goto error;
@@ -913,9 +932,18 @@ int iter_task(struct bpf_iter__task* ctx) {
   m->iter_task.added++;
   bpf_seq_write(seq, &helper->process, sizeof(process_t));
 
-  return 0;
+  goto cleanup;
 
 error:
   m->iter_task.error++;
+
+cleanup:
+  if (task != NULL) {
+    bpf_task_release(task);
+  }
+  if (group_leader != NULL) {
+    bpf_task_release(group_leader);
+  }
+
   return 0;
 }
