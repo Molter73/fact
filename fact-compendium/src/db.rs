@@ -5,7 +5,7 @@ use fact_core::event::{
     process::Process,
 };
 use log::info;
-use mongodb::{Collection, IndexModel, bson::doc};
+use mongodb::{Collection, IndexModel, bson::doc, options::IndexOptions};
 
 #[derive(Debug)]
 pub(crate) struct FactDb {
@@ -26,10 +26,19 @@ impl FactDb {
         db.create_collection("processes").await?;
         let processes = db.collection("processes");
         processes
-            .create_index(IndexModel::builder().keys(doc! {"upid": 1}).build())
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! { "hostname": 1, "upid": 1})
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
             .await?;
         processes
-            .create_index(IndexModel::builder().keys(doc! {"parent_upid": 1}).build())
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"hostname":1,"parent_upid": 1})
+                    .build(),
+            )
             .await?;
 
         info!("DB init done");
@@ -37,25 +46,16 @@ impl FactDb {
     }
 
     pub(crate) async fn insert_event(&self, event: Event) -> anyhow::Result<()> {
-        self.events.insert_one(&event).await?;
+        if !matches!(event.data, EventData::Process(ProcessData::Proc(_))) {
+            self.events.insert_one(&event).await?;
+        }
 
         if let EventData::Process(proc) = event.data {
             match proc {
-                ProcessData::Fork(ProcessForkData { child }) => {
-                    self.processes.insert_one(child).await?;
-                }
-                ProcessData::Exec(ProcessExecData(proc)) => {
-                    self.processes
-                        .replace_one(doc! {"upid": proc.upid as i64}, proc)
-                        .upsert(true)
-                        .await?;
-                }
-                ProcessData::Exit(ProcessExitData(proc)) => {
-                    self.processes
-                        .delete_one(doc! {"upid": proc.upid as i64})
-                        .await?;
-                }
-                ProcessData::Proc(proc) => {
+                ProcessData::Fork(ProcessForkData { child: proc })
+                | ProcessData::Exec(ProcessExecData(proc))
+                | ProcessData::Exit(ProcessExitData(proc))
+                | ProcessData::Proc(proc) => {
                     self.processes
                         .replace_one(doc! {"upid": proc.upid as i64}, proc)
                         .upsert(true)
