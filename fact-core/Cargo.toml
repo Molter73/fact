@@ -11,9 +11,9 @@ env_logger = { workspace = true }
 globset = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
-opentelemetry = { workspace = true }
-opentelemetry-otlp = { workspace = true }
-opentelemetry_sdk = { workspace = true }
+opentelemetry = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
 prost-types = { workspace = true }
 serde = { workspace = true }
 shlex = { workspace = true }
@@ -27,4 +27,4 @@ regex = { workspace = true }
 
 [features]
 bpf-test = []
-otel = []
+otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk"]

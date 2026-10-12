@@ -13,7 +13,6 @@ use crate::{
 };
 use fact_core::event::Event;
 
-
 mod grpc;
 #[cfg(feature = "otel")]
 mod otel;

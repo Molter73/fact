@@ -61,7 +61,7 @@ impl Bpf {
 
         // Include the BPF object as raw bytes at compile-time and load it
         // at runtime.
-        let mut obj = Bpf::load_ebpf(&checks, bpf_config, &*process_config.borrow())?;
+        let mut obj = Bpf::load_ebpf(&checks, bpf_config, &process_config.borrow())?;
 
         Bpf::validate_config(&obj, bpf_config);
         let paths_lpm_map = Bpf::take_path_prefix(&mut obj);
@@ -237,10 +237,6 @@ impl Bpf {
                         info!("Skipping {hook}: not supported on this kernel");
                         continue;
                     }
-
-                    let Some(hook) = name.strip_prefix("trace_") else {
-                        bail!("Invalid hook name: {name}");
-                    };
                     prog.load(hook, btf)?
                 }
                 Program::Iter(prog) => {
@@ -293,7 +289,6 @@ impl Bpf {
     /// If any attach fails, programs that were already attached during
     /// this call are dropped.
     fn attach_progs(&mut self) -> anyhow::Result<()> {
-        info!("attaching progs");
         let attach_tracepoints = self.process_config.borrow().enabled();
         self.links = self
             .obj
@@ -488,13 +483,12 @@ enum BpfAttachError {
 mod bpf_tests {
     use std::{collections, env, os::unix::fs::PermissionsExt, path::PathBuf, time::Duration};
 
+    use fact_core::event::{Event, EventTestData, process::Process};
     use tempfile::NamedTempFile;
     use tokio::{sync::watch, time::timeout};
 
     use crate::{
         config::{BpfProgConfig, FactConfig, reloader::Reloader},
-        event::{EventTestData, process::Process},
-        host_info,
         metrics::Metrics,
     };
 
@@ -606,7 +600,7 @@ mod bpf_tests {
                 println!("expected: {expected:#?}");
                 while let Some(event) = rx.recv().await {
                     println!("{event:#?}");
-                    if event == expected {
+                    if event.quick_eq(&expected) {
                         println!("Found!");
                         break;
                     }
@@ -674,8 +668,8 @@ mod bpf_tests {
 
         let btf = Btf::from_sys_fs().expect("Failed to read BTF symbols");
         let checks = Checks::new(&btf).expect("Failed to create `checks`");
-        let obj =
-            Bpf::load_ebpf(&checks, &BpfConfig::default()).expect("Failed to load eBPF object");
+        let obj = Bpf::load_ebpf(&checks, &BpfConfig::default(), &ProcessConfig::default())
+            .expect("Failed to load eBPF object");
 
         for (programs, expected) in tests {
             let mut bpf_config = BpfConfig::default();

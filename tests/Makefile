@@ -14,6 +14,7 @@ pytest-all: grpc-gen
 PYOUT = $(CURDIR)
 
 ARTIFACTS=
+ARTIFACTS += ../fact-api/proto/fact-api/network.proto
 ARTIFACTS += ../fact-api/proto/fact-api/process.proto
 ARTIFACTS += ../fact-api/proto/fact-api/file.proto
 ARTIFACTS += ../fact-api/proto/fact-api/fact_iservice.proto

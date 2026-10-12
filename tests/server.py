@@ -185,9 +185,7 @@ class EventServer(ABC):
             cancel.set()
 
 
-class GrpcServer(
-    EventServer, fact_iservice_pb2_grpc.FileActivityServiceServicer
-):
+class GrpcServer(EventServer, fact_iservice_pb2_grpc.FactServiceServicer):
     """gRPC server for the File Activity Service."""
 
     def __init__(self):
@@ -266,7 +264,6 @@ class GrpcServer(
         appends it to the queue.
         """
         for req in request_iterator:
-            print(req)
             msg = req.WhichOneof('msg')
             if msg != 'file':
                 continue
@@ -276,7 +273,7 @@ class GrpcServer(
 
     def serve(self, addr: str = '0.0.0.0:9999'):
         """Start the gRPC server on the given address."""
-        fact_iservice_pb2_grpc.add_FileActivityServiceServicer_to_server(
+        fact_iservice_pb2_grpc.add_FactServiceServicer_to_server(
             self,
             self.server,
         )

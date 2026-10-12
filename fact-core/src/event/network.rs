@@ -19,6 +19,7 @@ pub enum NetworkData {
 }
 
 impl NetworkData {
+    #[cfg(feature = "otel")]
     pub(crate) fn event_type(&self) -> &'static str {
         use NetworkData::*;
         match self {

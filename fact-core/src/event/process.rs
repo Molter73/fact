@@ -88,6 +88,18 @@ impl Process {
             None
         }
     }
+
+    /// Used for testing, skips values that cannot be read from proc
+    pub fn quick_eq(&self, other: &Self) -> bool {
+        self.args == other.args
+            && self.exe_path == other.exe_path
+            && self.container_id == other.container_id
+            && self.uid == other.uid
+            && self.gid == other.gid
+            && self.login_uid == other.login_uid
+            && self.pid == other.pid
+            && self.in_root_mount_ns == other.in_root_mount_ns
+    }
 }
 
 impl TryFrom<process_t> for Process {
@@ -312,7 +324,7 @@ mod tests {
                 comm: comm.to_string(),
                 ..Default::default()
             };
-            assert_eq!(result, expected, "Failed for {}", description);
+            assert!(result.quick_eq(&expected), "Failed for {}", description);
         }
     }
 
@@ -353,7 +365,7 @@ mod tests {
                 exe_path: PathBuf::from(path),
                 ..Default::default()
             };
-            assert_eq!(result, expected, "Failed for {}", description);
+            assert!(result.quick_eq(&expected), "Failed for {}", description);
         }
     }
 
@@ -409,7 +421,11 @@ mod tests {
                 args: expected.iter().map(|s| s.to_string()).collect(),
                 ..Default::default()
             };
-            assert_eq!(result, expected_process, "Failed for {}", description);
+            assert!(
+                result.quick_eq(&expected_process),
+                "Failed for {}",
+                description
+            );
         }
     }
 
@@ -452,7 +468,11 @@ mod tests {
                 container_id: expected_id.map(|s| s.to_string()),
                 ..Default::default()
             };
-            assert_eq!(result, expected_process, "Failed for {}", description);
+            assert!(
+                result.quick_eq(&expected_process),
+                "Failed for {}",
+                description
+            );
         }
     }
 

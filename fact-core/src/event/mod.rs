@@ -72,7 +72,7 @@ fn proto_to_timestamp(prost_types::Timestamp { seconds, nanos }: prost_types::Ti
     (seconds * 1_000_000_000) as u64 + nanos as u64
 }
 
-#[cfg(all(test, feature = "bpf-test"))]
+#[cfg(feature = "bpf-test")]
 #[derive(Debug)]
 pub enum EventTestData {
     Creation,
@@ -89,14 +89,16 @@ pub struct Event {
 }
 
 impl Event {
-    #[cfg(all(test, feature = "bpf-test"))]
-    pub(crate) fn new(
+    #[cfg(feature = "bpf-test")]
+    pub fn new(
         data: EventTestData,
         hostname: &'static str,
         filename: PathBuf,
         host_file: PathBuf,
         process: Process,
     ) -> anyhow::Result<Self> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -135,6 +137,10 @@ impl Event {
             hostname: hostname.to_string(),
             data,
         })
+    }
+
+    pub fn quick_eq(&self, other: &Self) -> bool {
+        self.data.quick_eq(&other.data)
     }
 
     pub fn is_creation(&self) -> bool {
@@ -333,8 +339,8 @@ impl Event {
     /// In the case of operations that involve two paths, like rename,
     /// the 'new' host_file will be set.
     pub fn set_host_path(&mut self, host_path: PathBuf) {
-        match &mut self.data {
-            EventData::File { file, .. } => match file {
+        if let EventData::File { file, .. } = &mut self.data {
+            match file {
                 FileData::Open(inner)
                 | FileData::Creation(inner)
                 | FileData::MkDir(inner)
@@ -351,8 +357,7 @@ impl Event {
                 | FileData::SetXattr(XattrFileData { inner, .. })
                 | FileData::RemoveXattr(XattrFileData { inner, .. })
                 | FileData::AclSet(AclSetFileData { inner, .. }) => inner.host_file = host_path,
-            },
-            _ => {}
+            }
         }
     }
 
@@ -564,6 +569,26 @@ pub enum EventData {
     },
 }
 
+impl EventData {
+    fn quick_eq(&self, other: &Self) -> bool {
+        use EventData::*;
+        match (self, other) {
+            (
+                File {
+                    process: self_process,
+                    file: self_file,
+                },
+                File {
+                    process: other_process,
+                    file: other_file,
+                },
+            ) => self_process.quick_eq(other_process) && self_file.quick_eq(other_file),
+            // TODO: unit tests only work on file activity
+            _ => false,
+        }
+    }
+}
+
 impl TryFrom<&event_t> for EventData {
     type Error = anyhow::Error;
 
@@ -597,18 +622,15 @@ impl TryFrom<&event_t> for EventData {
                 process,
             },
             fact_event_type_t::PROCESS_FORK => {
-                let child = Process::try_from(value.process)?;
-                let data = ProcessForkData { child };
+                let data = ProcessForkData { child: process };
                 EventData::Process(ProcessData::Fork(data))
             }
             fact_event_type_t::PROCESS_EXEC => {
-                let proc = Process::try_from(value.process)?;
-                let data = ProcessExecData(proc);
+                let data = ProcessExecData(process);
                 EventData::Process(ProcessData::Exec(data))
             }
             fact_event_type_t::PROCESS_EXIT => {
-                let proc = Process::try_from(value.process)?;
-                let data = ProcessExitData(proc);
+                let data = ProcessExitData(process);
                 EventData::Process(ProcessData::Exit(data))
             }
             fact_event_type_t::SOCKET_LISTEN => {
@@ -835,6 +857,55 @@ impl FileData {
         Ok(file)
     }
 
+    fn quick_eq(&self, other: &Self) -> bool {
+        use FileData::*;
+        match (self, other) {
+            (Open(self_inner), Open(other_inner))
+            | (Creation(self_inner), Creation(other_inner))
+            | (MkDir(self_inner), MkDir(other_inner))
+            | (RmDir(self_inner), RmDir(other_inner))
+            | (Link(self_inner), Link(other_inner))
+            | (Unlink(self_inner), Unlink(other_inner)) => {
+                self_inner.filename == other_inner.filename
+                    && self_inner.host_file == other_inner.host_file
+            }
+            (
+                Chmod(ChmodFileData {
+                    inner: self_inner,
+                    new_mode: self_new,
+                    old_mode: self_old,
+                }),
+                Chmod(ChmodFileData {
+                    inner: other_inner,
+                    new_mode: other_new,
+                    old_mode: other_old,
+                }),
+            ) => {
+                self_inner.filename == other_inner.filename
+                    && self_inner.host_file == other_inner.host_file
+                    && self_new == other_new
+                    && self_old == other_old
+            }
+            (
+                Rename {
+                    new: self_new,
+                    old: self_old,
+                },
+                Rename {
+                    new: other_new,
+                    old: other_old,
+                },
+            ) => {
+                self_new.filename == other_new.filename
+                    && self_new.host_file == other_new.host_file
+                    && self_old.filename == other_old.filename
+                    && self_old.host_file == other_old.host_file
+            }
+            // Anything else is unused by bpf-tests
+            _ => false,
+        }
+    }
+
     #[cfg(feature = "otel")]
     fn event_type(&self) -> &'static str {
         match self {
@@ -1046,6 +1117,33 @@ impl From<fact_api::file_activity::File> for FileData {
                 new: new.into(),
                 old: old.into(),
             },
+            fact_api::file_activity::File::XattrSet(fact_api::FileXattrChange {
+                activity: Some(data),
+                xattr_name,
+            }) => FileData::SetXattr(XattrFileData {
+                inner: data.into(),
+                xattr_name,
+            }),
+            fact_api::file_activity::File::XattrRemove(fact_api::FileXattrChange {
+                activity: Some(data),
+                xattr_name,
+            }) => FileData::RemoveXattr(XattrFileData {
+                inner: data.into(),
+                xattr_name,
+            }),
+            fact_api::file_activity::File::Acl(fact_api::FileAclChange {
+                activity: Some(data),
+                acl_type,
+                entries,
+            }) => FileData::AclSet(AclSetFileData {
+                inner: data.into(),
+                acl_type: if acl_type == 0 {
+                    AclType::Access
+                } else {
+                    AclType::Default
+                },
+                entries: entries.into_iter().map(AclEntry::from).collect(),
+            }),
             _ => unreachable!(),
         }
     }
@@ -1312,12 +1410,39 @@ impl From<AclTag> for i32 {
     }
 }
 
+impl From<i32> for AclTag {
+    fn from(value: i32) -> Self {
+        // The following conversion matches the definition on the
+        // protobufs, MAKE SURE IT STAYS THAT WAY!
+        match value {
+            1 => AclTag::UserObj,
+            2 => AclTag::User,
+            3 => AclTag::GroupObj,
+            4 => AclTag::Group,
+            5 => AclTag::Mask,
+            6 => AclTag::Other,
+            0 => AclTag::Unknown(0),
+            _ => unreachable!("Invalid ACL tag value: {value}"),
+        }
+    }
+}
+
 impl From<AclEntry> for fact_api::AclEntry {
     fn from(entry: AclEntry) -> Self {
         fact_api::AclEntry {
             tag: i32::from(entry.tag),
             perm: entry.perm as u32,
             id: entry.id.unwrap_or(u32::MAX),
+        }
+    }
+}
+
+impl From<fact_api::AclEntry> for AclEntry {
+    fn from(value: fact_api::AclEntry) -> Self {
+        AclEntry {
+            tag: value.tag.into(),
+            perm: value.perm as u16,
+            id: (value.id != u32::MAX).then_some(value.id),
         }
     }
 }
