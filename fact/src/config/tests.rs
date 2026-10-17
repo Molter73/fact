@@ -515,6 +515,30 @@ fn parsing() {
         ),
         (
             r#"
+            network:
+              enabled: true
+            "#,
+            FactConfig {
+                network: NetworkConfig {
+                    enabled: Some(true),
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
+            network:
+              enabled: false
+            "#,
+            FactConfig {
+                network: NetworkConfig {
+                    enabled: Some(false),
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
             paths:
             - /etc
             otel:
@@ -552,6 +576,8 @@ fn parsing() {
             process:
               enabled: false
               monitored_pid: 10
+            network:
+              enabled: true
             "#,
             FactConfig {
                 paths: [PathBuf::from("/etc")].as_slice().try_into().unwrap(),
@@ -609,6 +635,9 @@ fn parsing() {
                 process: ProcessConfig {
                     enabled: Some(false),
                     monitored_pid: Some(10),
+                },
+                network: NetworkConfig {
+                    enabled: Some(true),
                 },
             },
         ),
@@ -1036,6 +1065,13 @@ paths:
               unknown: []
             "#,
             "Invalid field 'process.unknown' with value: Array([])",
+        ),
+        (
+            r#"
+            network:
+              enabled: 1
+            "#,
+            "network.enabled field has incorrect type: Integer(1)",
         ),
         ("unknown:", "Invalid field 'unknown' with value: Null"),
     ];
@@ -2109,6 +2145,55 @@ fn update() {
         ),
         (
             r#"
+            network:
+              enabled: false
+            "#,
+            FactConfig::default(),
+            FactConfig {
+                network: NetworkConfig {
+                    enabled: Some(false),
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
+            network:
+              enabled: false
+            "#,
+            FactConfig {
+                network: NetworkConfig {
+                    enabled: Some(true),
+                },
+                ..Default::default()
+            },
+            FactConfig {
+                network: NetworkConfig {
+                    enabled: Some(false),
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
+            network:
+              enabled: false
+            "#,
+            FactConfig {
+                network: NetworkConfig {
+                    enabled: Some(false),
+                },
+                ..Default::default()
+            },
+            FactConfig {
+                network: NetworkConfig {
+                    enabled: Some(false),
+                },
+                ..Default::default()
+            },
+        ),
+        (
+            r#"
             paths:
             - /etc
             grpc:
@@ -2141,6 +2226,8 @@ fn update() {
             process:
               enabled: false
               monitored_pid: 10
+            network:
+              enabled: true
             "#,
             FactConfig {
                 paths: [PathBuf::from("/etc"), PathBuf::from("/bin")]
@@ -2187,6 +2274,9 @@ fn update() {
                 process: ProcessConfig {
                     enabled: Some(true),
                     monitored_pid: Some(20),
+                },
+                network: NetworkConfig {
+                    enabled: Some(false),
                 },
             },
             FactConfig {
@@ -2239,6 +2329,9 @@ fn update() {
                 process: ProcessConfig {
                     enabled: Some(false),
                     monitored_pid: Some(10),
+                },
+                network: NetworkConfig {
+                    enabled: Some(true),
                 },
             },
         ),

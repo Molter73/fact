@@ -8,7 +8,7 @@ use tokio::{
     time::interval,
 };
 
-use crate::config::{OTelConfig, PathsConfig, ProcessConfig};
+use crate::config::{NetworkConfig, OTelConfig, PathsConfig, ProcessConfig};
 
 use super::{CONFIG_FILES, EndpointConfig, FactConfig, GrpcConfig};
 
@@ -23,6 +23,7 @@ pub struct Reloader {
     scan_interval: watch::Sender<Duration>,
     rate_limit: watch::Sender<u64>,
     process: watch::Sender<ProcessConfig>,
+    network: watch::Sender<NetworkConfig>,
     trigger: Arc<Notify>,
 }
 
@@ -101,6 +102,12 @@ impl Reloader {
     /// changed.
     pub fn process(&self) -> watch::Receiver<ProcessConfig> {
         self.process.subscribe()
+    }
+
+    /// Subscribe to get notifications when network configuration is
+    /// changed.
+    pub fn network(&self) -> watch::Receiver<NetworkConfig> {
+        self.network.subscribe()
     }
 
     /// Get a reference to the internal trigger for manual reloading of
@@ -237,6 +244,16 @@ impl Reloader {
                 false
             }
         });
+
+        self.network.send_if_modified(|old| {
+            if *old != new.network {
+                debug!("Sending new network configuration...");
+                *old = new.network.clone();
+                true
+            } else {
+                false
+            }
+        });
     }
 
     /// Recreate the configuration and notify of changes to any
@@ -294,6 +311,7 @@ impl From<FactConfig> for Reloader {
             otel,
             paths,
             process,
+            network,
             ..
         } = config;
 
@@ -302,6 +320,7 @@ impl From<FactConfig> for Reloader {
         let (otel, _) = watch::channel(otel);
         let (paths, _) = watch::channel(paths);
         let (process, _) = watch::channel(process);
+        let (network, _) = watch::channel(network);
         let trigger = Arc::new(Notify::new());
 
         Reloader {
@@ -315,6 +334,7 @@ impl From<FactConfig> for Reloader {
             files,
             trigger,
             process,
+            network,
         }
     }
 }

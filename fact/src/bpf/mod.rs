@@ -17,7 +17,7 @@ use tokio::{
 };
 
 use crate::{
-    config::{BpfConfig, PathsConfig, ProcessConfig},
+    config::{BpfConfig, NetworkConfig, PathsConfig, ProcessConfig},
     metrics::EventCounter,
 };
 
@@ -39,6 +39,7 @@ pub struct Bpf {
     paths_config: watch::Receiver<PathsConfig>,
     paths_lpm_map: LpmTrie<MapData, [c_char; LPM_SIZE_MAX as usize], c_char>,
     process_config: watch::Receiver<ProcessConfig>,
+    network_config: watch::Receiver<NetworkConfig>,
 
     links: Vec<LsmLink>,
 
@@ -50,6 +51,7 @@ impl Bpf {
     pub fn new(
         paths_config: watch::Receiver<PathsConfig>,
         process_config: watch::Receiver<ProcessConfig>,
+        network_config: watch::Receiver<NetworkConfig>,
         bpf_config: &BpfConfig,
         running: watch::Receiver<bool>,
         metrics: EventCounter,
@@ -73,6 +75,7 @@ impl Bpf {
             tx,
             paths_config,
             process_config,
+            network_config,
             paths_lpm_map,
             links: Vec::new(),
             running,
@@ -289,7 +292,8 @@ impl Bpf {
     /// If any attach fails, programs that were already attached during
     /// this call are dropped.
     fn attach_progs(&mut self) -> anyhow::Result<()> {
-        let attach_tracepoints = self.process_config.borrow().enabled();
+        let attach_process_progs = self.process_config.borrow().enabled();
+        let attach_network_progs = self.network_config.borrow().enabled();
         self.links = self
             .obj
             .programs_mut()
@@ -297,13 +301,16 @@ impl Bpf {
                 Program::Lsm(_) => true, // only loading LSM hooks
                 _ => false,
             })
-            .filter_map(
-                |(name, prog)| match Bpf::attach_prog(prog, attach_tracepoints) {
+            .filter_map(|(name, prog)| {
+                if !attach_network_progs && name.starts_with("trace_socket_") {
+                    return None;
+                }
+                match Bpf::attach_prog(prog, attach_process_progs) {
                     Ok(link) => Some(Ok(link?)),
                     Err(BpfAttachError::NotLoaded) => None,
                     Err(e) => Some(Err(anyhow::anyhow!("Failed to attach {name}: {e:?}"))),
-                },
-            )
+                }
+            })
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(())
@@ -515,6 +522,7 @@ mod bpf_tests {
         let (bpf, mut rx) = Bpf::new(
             reloader.paths(),
             reloader.process(),
+            reloader.network(),
             &bpf_config,
             run_rx,
             metrics.bpf_worker.clone(),

@@ -195,6 +195,7 @@ fn bpf_input(args: SetupArgs) -> anyhow::Result<(Option<KernelMetrics>, mpsc::Re
     let (mut bpf, rx) = Bpf::new(
         args.reloader.paths(),
         args.reloader.process(),
+        args.reloader.network(),
         &args.bpf_config,
         args.running.clone(),
         args.metrics.bpf_worker.clone(),
