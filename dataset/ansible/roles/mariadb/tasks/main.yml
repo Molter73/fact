@@ -17,21 +17,29 @@
     host: localhost
     password: "{{ mariadb_root_pass }}"
     state: present
+    login_unix_socket: "{{ mariadb_socket }}"
+    login_user: root
+    login_password: "{{ mariadb_root_pass }}"
+    check_implicit_admin: true
 
 - name: Remove anonymous MySQL users
   ansible.mysql.mysql_user:
     name: ""
     host: localhost
     state: absent
+    login_unix_socket: "{{ mariadb_socket }}"
     login_user: root
     login_password: "{{ mariadb_root_pass }}"
+    check_implicit_admin: true
 
 - name: Create WordPress database
   ansible.mysql.mysql_db:
     name: "{{ wp_db_name }}"
     state: present
+    login_unix_socket: "{{ mariadb_socket }}"
     login_user: root
     login_password: "{{ mariadb_root_pass }}"
+    check_implicit_admin: true
 
 - name: Create WordPress database user
   ansible.mysql.mysql_user:
@@ -40,5 +48,7 @@
     password: "{{ wp_db_pass }}"
     priv: "{{ wp_db_name }}.*:ALL"
     state: present
+    login_unix_socket: "{{ mariadb_socket }}"
     login_user: root
     login_password: "{{ mariadb_root_pass }}"
+    check_implicit_admin: true

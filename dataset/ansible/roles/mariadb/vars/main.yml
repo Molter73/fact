@@ -1,4 +1,5 @@
 mariadb_root_pass: "r00t_S3cur3!"
+mariadb_socket: /var/lib/mysql/mysql.sock
 wp_db_name: wordpress
 wp_db_user: wordpress
 wp_db_pass: "wp_Str0ng!Pass"

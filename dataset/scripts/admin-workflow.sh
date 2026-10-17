@@ -2,7 +2,7 @@
 set -e
 
 DURATION="${1:-3600}"
-WP_DIR="${WP_DIR:-/var/www/wordpress}"
+WP_DIR="${WP_DIR:-/usr/share/wordpress}"
 WP_ADMIN_USER="${WP_ADMIN_USER:-datasetadmin}"
 WP_ADMIN_PASS="${WP_ADMIN_PASS:-DatasetAdmin!2024}"
 
@@ -29,10 +29,8 @@ while [ $SECONDS -lt $end ]; do
     wp post term add "$POST_ID" post_tag "$TAG" --path="$WP_DIR" 2>/dev/null || true
 
     IMG=$(mktemp /tmp/dataset-img-XXXXXX.png)
-    convert -size 800x600 xc:gray +noise Random -fill black \
-        -pointsize 24 -gravity center \
-        -annotate 0 "Dataset $(date +%s)" \
-        "$IMG" 2>/dev/null
+    printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==' |
+        base64 -d >"$IMG" 2>/dev/null
 
     wp media import "$IMG" --post_id="$POST_ID" \
         --path="$WP_DIR" --user="$WP_ADMIN_USER" 2>/dev/null || true
