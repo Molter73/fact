@@ -6,6 +6,13 @@ WP_DIR="${WP_DIR:-/usr/share/wordpress}"
 WP_ADMIN_USER="${WP_ADMIN_USER:-datasetadmin}"
 WP_ADMIN_PASS="${WP_ADMIN_PASS:-DatasetAdmin!2024}"
 
+SUDO=""
+[ "$(id -u)" -ne 0 ] && SUDO="sudo"
+
+MEDIA_PER_POST="${MEDIA_PER_POST:-3}"
+IDLE_MIN="${ADMIN_IDLE_MIN:-5}"
+IDLE_MAX="${ADMIN_IDLE_MAX:-15}"
+
 end=$((SECONDS + DURATION))
 
 while [ $SECONDS -lt $end ]; do
@@ -28,14 +35,17 @@ while [ $SECONDS -lt $end ]; do
     TAG="${TAG_CHOICES[$((RANDOM % ${#TAG_CHOICES[@]}))]}"
     wp post term add "$POST_ID" post_tag "$TAG" --path="$WP_DIR" 2>/dev/null || true
 
-    IMG=$(mktemp /tmp/dataset-img-XXXXXX.png)
-    printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==' |
-        base64 -d >"$IMG" 2>/dev/null
+    IMGS=()
+    for _ in $(seq 1 "$MEDIA_PER_POST"); do
+        IMG=$(mktemp /tmp/dataset-img-XXXXXX.png)
+        printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==' |
+            base64 -d >"$IMG" 2>/dev/null
+        IMGS+=("$IMG")
+    done
 
-    wp media import "$IMG" --post_id="$POST_ID" \
-        --path="$WP_DIR" --user="$WP_ADMIN_USER" 2>/dev/null || true
-    rm -f "$IMG"
+    $SUDO wp media import "${IMGS[@]}" --post_id="$POST_ID" \
+        --path="$WP_DIR" --user="$WP_ADMIN_USER" --allow-root 2>/dev/null || true
+    rm -f "${IMGS[@]}"
 
-    INTERVAL=$((RANDOM % 60 + 30))
-    sleep $INTERVAL
+    sleep $((RANDOM % (IDLE_MAX - IDLE_MIN + 1) + IDLE_MIN))
 done

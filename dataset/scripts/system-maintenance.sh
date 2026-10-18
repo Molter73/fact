@@ -8,9 +8,12 @@ MYSQL_DB="${MYSQL_DB:-wordpress}"
 
 WP_DIR="${WP_DIR:-/usr/share/wordpress}"
 
-PKG_POOL=(tree jq unzip rsync htop)
+PKG_POOL=(tree jq unzip rsync htop sysstat strace lsof ncdu iotop)
 
-PKG_MIN_AGE="${PKG_MIN_AGE:-600}"
+PKG_MIN_AGE="${PKG_MIN_AGE:-30}"
+
+IDLE_MIN="${MAINT_IDLE_MIN:-1}"
+IDLE_MAX="${MAINT_IDLE_MAX:-3}"
 
 FIREWALL_SERVICES=(mysql postgresql samba cockpit)
 
@@ -244,6 +247,6 @@ while [ $SECONDS -lt $end ]; do
         ;;
     esac
 
-    sleep $((RANDOM % 60 + 30)) &
+    sleep $((RANDOM % (IDLE_MAX - IDLE_MIN + 1) + IDLE_MIN)) &
     wait $! 2>/dev/null || true
 done

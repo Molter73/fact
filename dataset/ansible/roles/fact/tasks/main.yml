@@ -1,15 +1,45 @@
+- name: Create configuration directory
+  ansible.builtin.file:
+    path: /etc/stackrox
+    mode: '0755'
+    state: directory
+
+- name: Create configuration file
+  ansible.builtin.copy:
+    content: |
+      paths:
+        - '/etc'
+        - '/etc/**/*'
+        - '/bin'
+        - '/bin/**/*'
+        - '/usr/bin'
+        - '/usr/bin/**/*'
+        - '/sbin'
+        - '/sbin/**/*'
+        - '/usr/sbin'
+        - '/usr/sbin/**/*'
+        - '/usr/share/wordpress'
+        - '/usr/share/wordpress/**/*'
+      grpc:
+        url: http://10.10.0.1:8080
+      process:
+        enabled: true
+      network:
+        enabled: true
+    mode: '0644'
+    dest: /etc/stackrox/fact.yml
+
 - name: Create fact.container
   ansible.builtin.copy:
     content: |
       [Container]
       ContainerName=fact
       Environment=FACT_HOST_MOUNT=/host
-      Environment=FACT_LOGLEVEL=debug
-      Environment=FACT_PATHS=/etc:/etc/**/*:/bin:/bin/**/*:/usr/bin:/usr/bin/**/*:/sbin:/sbin/**/*:/usr/sbin:/usr/sbin/**/*:/var/lib/mysql:/var/lib/mysql/**/*
-      Exec=--process-enabled http://10.10.0.1:8080
+      Environment=FACT_LOGLEVEL=info
       Image=quay.io/mmoltras/fact:tfg
       Network=host
       Volume=/:/host:ro
+      Volume=/etc/stackrox/fact.yml:/etc/stackrox/fact.yml:ro
       PodmanArgs=--privileged --pid=host
 
       [Service]

@@ -32,3 +32,7 @@
     state: enabled
     immediate: true
 
+- name: Set selinux to permissive mode
+  ansible.posix.selinux:
+    policy: targeted
+    state: permissive
