@@ -297,10 +297,6 @@ impl Bpf {
         self.links = self
             .obj
             .programs_mut()
-            .filter(|(_, prog)| match prog {
-                Program::Lsm(_) => true, // only loading LSM hooks
-                _ => false,
-            })
             .filter_map(|(name, prog)| {
                 if !attach_network_progs && name.starts_with("trace_socket_") {
                     return None;
