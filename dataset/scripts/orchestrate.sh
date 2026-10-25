@@ -12,7 +12,6 @@ ATTACKS_AFTER=60
 ATTACKS_MANIFEST="${ATTACKS_MANIFEST:-attacks-manifest.jsonl}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REMOTE_DIR="/opt/scripts"
 
 usage() {
     echo "Usage: $0 [options]"
@@ -27,9 +26,9 @@ usage() {
     echo "  --duration SECS   Total duration in seconds (default: 300)"
     echo "  --concurrency N   Concurrent browsing sessions (default: 2)"
     echo "  --url URL         WordPress site URL (default: http://10.10.0.10)"
-    echo "  --ssh HOST        SSH target for remote admin/noise/maintenance execution"
+    echo "  --ssh HOST        SSH target: workloads and attacks are delivered over it"
     echo "  --no-maintenance  Skip system-maintenance.sh (it writes /etc and /usr/bin via sudo)"
-    echo "  --attacks         Run attacks.sh on the monitored host"
+    echo "  --attacks         Run the attack techniques against the monitored host"
     echo "  --attacks-after S Start the attacks S seconds in (default: 60)"
     echo "  --attacks-manifest P"
     echo "                    Attack manifest output (default: $ATTACKS_MANIFEST)"
@@ -78,9 +77,6 @@ SINK_PORT="${SINK##*:}"
 SINK_PID=""
 
 MANIFEST="$ATTACKS_MANIFEST"
-if [ -n "$SSH_TARGET" ]; then
-    MANIFEST="/tmp/attacks-manifest.$$.jsonl"
-fi
 export SITE_URL SINK MANIFEST
 
 if [ "$RUN_ATTACKS" -eq 1 ] && [ "$ATTACKS_AFTER" -ge "$DURATION" ]; then
@@ -104,11 +100,6 @@ CHILD_PIDS=()
 cleanup() {
     echo ""
     echo "Stopping traffic generation..."
-    if [ -n "$SSH_TARGET" ]; then
-        # shellcheck disable=SC2029 # $REMOTE_DIR is expanded on purpose
-        ssh "$SSH_TARGET" "pkill -f '$REMOTE_DIR/' 2>/dev/null; echo done" \
-            >/dev/null 2>&1 || true
-    fi
     if [ -n "$SINK_PID" ]; then
         kill "$SINK_PID" 2>/dev/null || true
         SINK_PID=""
@@ -120,26 +111,48 @@ cleanup() {
 }
 trap cleanup EXIT
 
-REMOTE_ENV="SITE_URL=$SITE_URL WP_DIR=/usr/share/wordpress \
-MYSQL_USER=wordpress MYSQL_PASS=wp_Str0ng!Pass MYSQL_DB=wordpress \
-WP_ADMIN_USER=datasetadmin \
-SINK=$SINK MANIFEST=$MANIFEST"
+REMOTE_ENV=(
+    "SITE_URL=$SITE_URL"
+    "WP_DIR=/usr/share/wordpress"
+    "MYSQL_USER=wordpress"
+    "MYSQL_PASS=wp_Str0ng!Pass"
+    "MYSQL_DB=wordpress"
+    "WP_ADMIN_USER=datasetadmin"
+)
+
+script_stream() {
+    local script="$1"
+    for pair in "${REMOTE_ENV[@]}"; do
+        printf 'export %s=%q\n' "${pair%%=*}" "${pair#*=}"
+    done
+    cat "$SCRIPT_DIR/$script"
+}
 
 launch_remote() {
     local script="$1"
-    ssh -o BatchMode=yes "$SSH_TARGET" \
-        "if [ ! -x $REMOTE_DIR/$script ]; then echo 'missing $REMOTE_DIR/$script' >&2; exit 1; fi; \
-         env $REMOTE_ENV setsid $REMOTE_DIR/$script $DURATION $SITE_URL \
-         </dev/null >/dev/null 2>&1 &" ||
-        {
-            echo "Failed to launch $script on $SSH_TARGET" >&2
-            return 1
-        }
+    [ -f "$SCRIPT_DIR/$script" ] || {
+        echo "Missing local script: $SCRIPT_DIR/$script" >&2
+        return 1
+    }
+    # Ship the body over stdin and run it as `bash -s`, the same command line
+    # an attack uses. Environment goes in the body, not on the command line, so
+    # the two are indistinguishable to the host. Keeping the session attached
+    # (no setsid) leaves the workload under sshd-session, not reparented to
+    # systemd.
+    script_stream "$script" | ssh -o BatchMode=yes "$SSH_TARGET" \
+        "bash -s -- $DURATION $SITE_URL" >/dev/null 2>&1 &
+    CHILD_PIDS+=($!)
 }
 
 launch_local() {
     local script="$1"
-    "$SCRIPT_DIR/$script" "$DURATION" "$SITE_URL" &
+    script_stream "$script" | bash -s -- "$DURATION" "$SITE_URL" &
+    CHILD_PIDS+=($!)
+}
+
+launch_local_root() {
+    local script="$1"
+    script_stream "$script" | sudo -n bash -s -- "$DURATION" "$SITE_URL" &
     CHILD_PIDS+=($!)
 }
 
@@ -177,7 +190,10 @@ launch_attacks() {
     start_sink
 
     if [ -n "$SSH_TARGET" ]; then
-        launch_remote "attacks.sh"
+        # Run here and deliver each technique over its own ssh connection, so the
+        # monitored host sees a remote login instead of a local script.
+        SSH_TARGET="$SSH_TARGET" "$SCRIPT_DIR/attacks.sh" "$DURATION" "$SITE_URL" &
+        CHILD_PIDS+=($!)
     else
         launch_local "attacks.sh"
     fi
@@ -185,16 +201,22 @@ launch_attacks() {
 
 fetch_attacks_manifest() {
     [ "$RUN_ATTACKS" -eq 1 ] || return 0
-    [ -n "$SSH_TARGET" ] || return 0
 
-    scp -q "$SSH_TARGET:$MANIFEST" "$ATTACKS_MANIFEST" || {
-        echo "Could not fetch $MANIFEST from $SSH_TARGET" >&2
+    # The manifest is written wherever attacks.sh runs, which in remote mode is
+    # this machine, so there is nothing to fetch.
+    [ -f "$ATTACKS_MANIFEST" ] || {
+        echo "Attack manifest missing: $ATTACKS_MANIFEST" >&2
         return 0
     }
     echo "Attack manifest: $ATTACKS_MANIFEST"
 }
 
 if [ -n "$SSH_TARGET" ]; then
+    if ! ssh -o BatchMode=yes "$SSH_TARGET" true; then
+        echo "Cannot run commands on $SSH_TARGET; nothing was captured." >&2
+        exit 1
+    fi
+
     launch_remote "background-noise.sh"
     launch_remote "admin-workflow.sh"
     if [ "$RUN_MAINTENANCE" -eq 1 ]; then
@@ -211,6 +233,7 @@ if [ -n "$SSH_TARGET" ]; then
     echo "Workloads running remotely via ${SSH_TARGET}:"
     echo "  background-noise.sh, admin-workflow.sh"
     [ "$RUN_MAINTENANCE" -eq 1 ] && echo "  system-maintenance.sh"
+    echo "  (each delivered over ssh and run as 'bash -s', same as the attacks)"
     echo "Workloads running locally:"
     echo "  web-browsing.sh (${CONCURRENCY}x): PIDs ${BROWSER_PIDS[*]}"
     echo ""
@@ -240,9 +263,8 @@ else
             launch_local "system-maintenance.sh"
             MAINT_PID=$!
         elif command -v sudo >/dev/null 2>&1; then
-            sudo -n "$SCRIPT_DIR/system-maintenance.sh" "$DURATION" "$SITE_URL" &
+            launch_local_root "system-maintenance.sh"
             MAINT_PID=$!
-            CHILD_PIDS+=($!)
         else
             echo "Skipping system-maintenance.sh: it writes /etc and /usr/bin and needs root or sudo."
             RUN_MAINTENANCE=0
