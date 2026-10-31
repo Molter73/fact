@@ -1,13 +1,14 @@
 #!/bin/bash
-set -e
+set -u
 
 DURATION="${1:-3600}"
 WP_DIR="${WP_DIR:-/usr/share/wordpress}"
 WP_ADMIN_USER="${WP_ADMIN_USER:-datasetadmin}"
-WP_ADMIN_PASS="${WP_ADMIN_PASS:-DatasetAdmin!2024}"
 
 SUDO=""
-[ "$(id -u)" -ne 0 ] && SUDO="sudo"
+if [ "$(id -u)" -ne 0 ]; then
+    SUDO="sudo"
+fi
 
 MEDIA_PER_POST="${MEDIA_PER_POST:-3}"
 IDLE_MIN="${ADMIN_IDLE_MIN:-5}"
@@ -29,11 +30,11 @@ while [ $SECONDS -lt $end ]; do
     }
 
     CATEGORY=$((RANDOM % 3 + 1))
-    wp post term add "$POST_ID" category "$CATEGORY" --path="$WP_DIR" 2>/dev/null || true
+    wp post term add "$POST_ID" category "$CATEGORY" --path="$WP_DIR" 2>/dev/null
 
     TAG_CHOICES=("dataset" "monitoring" "analysis" "system-activity" "research")
     TAG="${TAG_CHOICES[$((RANDOM % ${#TAG_CHOICES[@]}))]}"
-    wp post term add "$POST_ID" post_tag "$TAG" --path="$WP_DIR" 2>/dev/null || true
+    wp post term add "$POST_ID" post_tag "$TAG" --path="$WP_DIR" 2>/dev/null
 
     IMGS=()
     for _ in $(seq 1 "$MEDIA_PER_POST"); do
@@ -44,7 +45,7 @@ while [ $SECONDS -lt $end ]; do
     done
 
     $SUDO wp media import "${IMGS[@]}" --post_id="$POST_ID" \
-        --path="$WP_DIR" --user="$WP_ADMIN_USER" --allow-root 2>/dev/null || true
+        --path="$WP_DIR" --user="$WP_ADMIN_USER" --allow-root 2>/dev/null
     rm -f "${IMGS[@]}"
 
     sleep $((RANDOM % (IDLE_MAX - IDLE_MIN + 1) + IDLE_MIN))

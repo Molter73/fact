@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -u
 
 DURATION="${1:-3600}"
 MYSQL_USER="${MYSQL_USER:-wordpress}"
@@ -19,7 +19,6 @@ FIREWALL_SERVICES=(mysql postgresql samba cockpit)
 
 UNIT_NAME="ds-maintenance"
 SYSCTL_FILE="/etc/sysctl.d/99-ds-tuning.conf"
-CRON_FILE="/etc/cron.d/ds-report"
 
 INSTALLED_USERS=()
 ADDED_SERVICES=()
@@ -29,7 +28,9 @@ declare -A PKG_ORDER=()
 PKG_SEQ=0
 
 SUDO=""
-[ "$(id -u)" -ne 0 ] && SUDO="sudo"
+if [ "$(id -u)" -ne 0 ]; then
+    SUDO="sudo"
+fi
 
 install_pkg() {
     local pkg="$1"
@@ -83,24 +84,24 @@ pkg_restore() {
 cleanup() {
     trap - EXIT INT TERM
 
-    $SUDO systemctl disable --now "$UNIT_NAME.timer" >/dev/null 2>&1 || true
+    $SUDO systemctl disable --now "$UNIT_NAME.timer" >/dev/null 2>&1
     $SUDO rm -f "/etc/systemd/system/$UNIT_NAME.timer" \
-        "/etc/systemd/system/$UNIT_NAME.service" 2>/dev/null || true
-    $SUDO systemctl daemon-reload >/dev/null 2>&1 || true
+        "/etc/systemd/system/$UNIT_NAME.service" 2>/dev/null
+    $SUDO systemctl daemon-reload >/dev/null 2>&1
 
-    $SUDO rm -f "$CRON_FILE" "$SYSCTL_FILE" 2>/dev/null || true
+    $SUDO rm -f "$SYSCTL_FILE" 2>/dev/null
 
     for user in "${INSTALLED_USERS[@]:-}"; do
-        [ -n "$user" ] && $SUDO userdel "$user" >/dev/null 2>&1 || true
+        [ -n "$user" ] && $SUDO userdel "$user" >/dev/null 2>&1
     done
 
     for service in "${ADDED_SERVICES[@]:-}"; do
-        [ -n "$service" ] && $SUDO firewall-cmd --permanent --remove-service="$service" >/dev/null 2>&1 || true
+        [ -n "$service" ] && $SUDO firewall-cmd --permanent --remove-service="$service" >/dev/null 2>&1
     done
-    command -v firewall-cmd >/dev/null 2>&1 && $SUDO firewall-cmd --reload >/dev/null 2>&1 || true
+    command -v firewall-cmd >/dev/null 2>&1 && $SUDO firewall-cmd --reload >/dev/null 2>&1
 
     for pkg in "${!PKG_SINCE[@]}"; do
-        $SUDO dnf remove -y "$pkg" >/dev/null 2>&1 || true
+        $SUDO dnf remove -y "$pkg" >/dev/null 2>&1
     done
 }
 trap cleanup EXIT
@@ -109,10 +110,10 @@ trap 'exit 143' TERM
 
 timer_deploy() {
     if [ -f "/etc/systemd/system/$UNIT_NAME.timer" ]; then
-        $SUDO systemctl disable --now "$UNIT_NAME.timer" >/dev/null 2>&1 || true
+        $SUDO systemctl disable --now "$UNIT_NAME.timer" >/dev/null 2>&1
         $SUDO rm -f "/etc/systemd/system/$UNIT_NAME.timer" \
-            "/etc/systemd/system/$UNIT_NAME.service" 2>/dev/null || true
-        $SUDO systemctl daemon-reload >/dev/null 2>&1 || true
+            "/etc/systemd/system/$UNIT_NAME.service" 2>/dev/null
+        $SUDO systemctl daemon-reload >/dev/null 2>&1
         return 0
     fi
 
@@ -140,12 +141,12 @@ WantedBy=timers.target
 EOF
 
     $SUDO chmod 0644 "/etc/systemd/system/$UNIT_NAME.service" \
-        "/etc/systemd/system/$UNIT_NAME.timer" 2>/dev/null || true
+        "/etc/systemd/system/$UNIT_NAME.timer" 2>/dev/null
     $SUDO chown root:root "/etc/systemd/system/$UNIT_NAME.service" \
-        "/etc/systemd/system/$UNIT_NAME.timer" 2>/dev/null || true
+        "/etc/systemd/system/$UNIT_NAME.timer" 2>/dev/null
 
-    $SUDO systemctl daemon-reload >/dev/null 2>&1 || true
-    $SUDO systemctl enable --now "$UNIT_NAME.timer" >/dev/null 2>&1 || true
+    $SUDO systemctl daemon-reload >/dev/null 2>&1
+    $SUDO systemctl enable --now "$UNIT_NAME.timer" >/dev/null 2>&1
 }
 
 service_account() {
@@ -158,7 +159,7 @@ service_account() {
             fi
         done
         INSTALLED_USERS=("${remaining[@]}")
-        $SUDO userdel "$user" >/dev/null 2>&1 || true
+        $SUDO userdel "$user" >/dev/null 2>&1
         return 0
     fi
 
@@ -179,20 +180,20 @@ firewall_rule() {
             fi
         done
         ADDED_SERVICES=("${remaining[@]}")
-        $SUDO firewall-cmd --permanent --remove-service="$service" >/dev/null 2>&1 || true
-        $SUDO firewall-cmd --reload >/dev/null 2>&1 || true
+        $SUDO firewall-cmd --permanent --remove-service="$service" >/dev/null 2>&1
+        $SUDO firewall-cmd --reload >/dev/null 2>&1
         return 0
     fi
 
     local service="${FIREWALL_SERVICES[RANDOM % ${#FIREWALL_SERVICES[@]}]}"
     $SUDO firewall-cmd --permanent --add-service="$service" >/dev/null 2>&1 || return 0
-    $SUDO firewall-cmd --reload >/dev/null 2>&1 || true
+    $SUDO firewall-cmd --reload >/dev/null 2>&1
     ADDED_SERVICES+=("$service")
 }
 
 sysctl_tuning() {
     if [ -f "$SYSCTL_FILE" ]; then
-        $SUDO rm -f "$SYSCTL_FILE" 2>/dev/null || true
+        $SUDO rm -f "$SYSCTL_FILE" 2>/dev/null
         return 0
     fi
 
@@ -202,8 +203,8 @@ net.ipv4.tcp_syncookies = 1
 kernel.randomize_va_space = 2
 fs.suid_dumpable = 1
 EOF
-    $SUDO chmod 0644 "$SYSCTL_FILE" 2>/dev/null || true
-    $SUDO sysctl -p "$SYSCTL_FILE" >/dev/null 2>&1 || true
+    $SUDO chmod 0644 "$SYSCTL_FILE" 2>/dev/null
+    $SUDO sysctl -p "$SYSCTL_FILE" >/dev/null 2>&1
 }
 
 db_maintenance() {
@@ -211,10 +212,10 @@ db_maintenance() {
 
     if command -v mysqlcheck >/dev/null 2>&1; then
         mysqlcheck -u "$MYSQL_USER" -p"$MYSQL_PASS" --optimize \
-            "$MYSQL_DB" "${table[RANDOM % ${#table[@]}]}" >/dev/null 2>&1 || true
+            "$MYSQL_DB" "${table[RANDOM % ${#table[@]}]}" >/dev/null 2>&1
     elif command -v mariadb-check >/dev/null 2>&1; then
         mariadb-check -u "$MYSQL_USER" -p"$MYSQL_PASS" --optimize \
-            "$MYSQL_DB" "${table[RANDOM % ${#table[@]}]}" >/dev/null 2>&1 || true
+            "$MYSQL_DB" "${table[RANDOM % ${#table[@]}]}" >/dev/null 2>&1
     fi
 }
 
@@ -248,5 +249,5 @@ while [ $SECONDS -lt $end ]; do
     esac
 
     sleep $((RANDOM % (IDLE_MAX - IDLE_MIN + 1) + IDLE_MIN)) &
-    wait $! 2>/dev/null || true
+    wait $! 2>/dev/null
 done

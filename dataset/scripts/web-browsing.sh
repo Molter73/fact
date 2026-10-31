@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -u
 
 DURATION="${1:-300}"
 SITE_URL="${2:-http://10.10.0.10}"
@@ -15,6 +15,10 @@ USER_AGENTS=(
 
 CURL_OPTS=(-s -o /dev/null -w "%{http_code}:%{url_effective}\n" --connect-timeout 3 --max-time 10)
 
+fetch() {
+    curl "${CURL_OPTS[@]}" "$@"
+}
+
 pick_ua() {
     echo "${USER_AGENTS[$((RANDOM % ${#USER_AGENTS[@]}))]}"
 }
@@ -26,48 +30,48 @@ while [ $SECONDS -lt $END ]; do
 
     case $((RANDOM % 8)) in
         0)
-            curl "${CURL_OPTS[@]}" -H "User-Agent: $UA" "$SITE_URL/"
+            fetch -H "User-Agent: $UA" "$SITE_URL/"
             ;;
         1)
             POST_ID=$((RANDOM % 6 + 1))
-            curl "${CURL_OPTS[@]}" -H "User-Agent: $UA" \
+            fetch -H "User-Agent: $UA" \
                 -H "Referer: $SITE_URL/" \
                 "$SITE_URL/?p=$POST_ID"
             ;;
         2)
             TERMS=("test" "dataset" "monitoring" "analysis" "activity" "security")
             TERM="${TERMS[$((RANDOM % ${#TERMS[@]}))]}"
-            curl "${CURL_OPTS[@]}" -H "User-Agent: $UA" \
+            fetch -H "User-Agent: $UA" \
                 -H "Referer: $SITE_URL/" \
                 "$SITE_URL/?s=$TERM"
             ;;
         3)
             PAGE_ID=$((RANDOM % 2 + 1))
-            curl "${CURL_OPTS[@]}" -H "User-Agent: $UA" \
+            fetch -H "User-Agent: $UA" \
                 -H "Referer: $SITE_URL/" \
                 "$SITE_URL/?page_id=$PAGE_ID"
             ;;
         4)
-            curl "${CURL_OPTS[@]}" -H "User-Agent: $UA" \
+            fetch -H "User-Agent: $UA" \
                 -H "Referer: $SITE_URL/" \
                 "$SITE_URL/feed/"
             ;;
         5)
-            curl "${CURL_OPTS[@]}" -H "User-Agent: $UA" \
+            fetch -H "User-Agent: $UA" \
                 -H "Referer: $SITE_URL/" \
                 "$SITE_URL/wp-content/themes/twentytwentyfour/style.css"
             ;;
         6)
             POST_ID=$((RANDOM % 6 + 1))
             COMMENT_CONTENT="Interesting post! Thanks for sharing. $(date +%s)"
-            curl "${CURL_OPTS[@]}" -H "User-Agent: $UA" \
+            fetch -H "User-Agent: $UA" \
                 -H "Referer: $SITE_URL/?p=$POST_ID" \
                 -H "Content-Type: application/x-www-form-urlencoded" \
                 -d "comment=${COMMENT_CONTENT}&author=Visitor${RANDOM}&email=user${RANDOM}@example.com&comment_post_ID=${POST_ID}&submit=Post+Comment" \
                 "$SITE_URL/wp-comments-post.php"
             ;;
         7)
-            curl "${CURL_OPTS[@]}" -H "User-Agent: $UA" \
+            fetch -H "User-Agent: $UA" \
                 -H "Referer: $SITE_URL/" \
                 "$SITE_URL/wp-json/wp/v2/posts"
             ;;

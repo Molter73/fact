@@ -13,7 +13,6 @@ without regenerating traffic on the VM."""
 import argparse
 import gzip
 import os
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
