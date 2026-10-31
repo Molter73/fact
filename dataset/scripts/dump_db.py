@@ -10,6 +10,7 @@
 """Dump the FACT dataset DB to gzipped JSONL so captures can be reused
 without regenerating traffic on the VM."""
 
+import argparse
 import gzip
 import os
 import sys
@@ -27,8 +28,14 @@ DUMPS = Path(__file__).resolve().parent / "dumps"
 
 
 def main():
-    if len(sys.argv) > 1:
-        out = Path(sys.argv[1])
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-o', '--output', default=None,
+                        action='store', required=False,
+                        help='directory to dump into')
+    args = parser.parse_args()
+
+    if args.output is not None:
+        out = Path(args.output)
     else:
         stamp = datetime.now(timezone.utc).strftime("capture-%Y%m%dT%H%M%SZ")
         out = DUMPS / stamp
