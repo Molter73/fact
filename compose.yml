@@ -33,6 +33,18 @@ services:
     depends_on:
       - db
 
+  fact-checker:
+    image: quay.io/mmoltras/fact-checker:${FACT_TAG:-latest}
+    environment:
+      FACT_CHECKER_DB_URL: mongodb://${MONGO_INITDB_ROOT_USERNAME:-root}:${MONGO_INITDB_ROOT_PASSWORD:-password}@db:27017
+      CHECKER_LOGLEVEL: info
+      CHECKER_GRACE_SECONDS: 30
+      CHECKER_FINGERPRINT: comm_parent_argv
+    depends_on:
+      - db
+      - compendium
+    profiles: ["checker"]
+
   fact:
     image: quay.io/mmoltras/fact:${FACT_TAG:-latest}
     environment:

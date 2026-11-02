@@ -18,13 +18,14 @@ import argparse
 import json
 from pathlib import Path
 
-import capture
-import detectors
-import features
 import joblib
 import numpy as np
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
+
+import capture
+import detectors
+import features
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -207,7 +208,7 @@ def main():
     if args.auc:
         auc(eval_x, labels, excluded)
 
-    disguised = None
+    disguised_x = None
     if args.disguise:
         disguised = features.apply_rarity(features.disguise_rows(evaluation), rarity)
         disguised_x = np.asarray(features.vectorize(disguised), dtype=float)
@@ -217,7 +218,7 @@ def main():
         train_scores, eval_scores, estimator, scaler = fit_score(name, train_x, eval_x)
         threshold = float(np.quantile(train_scores, 1 - args.fpr))
         d_pair = None
-        if disguised is not None:
+        if disguised_x is not None:
             scores = -estimator.score_samples(scaler.transform(disguised_x))
             d_tpr, d_fpr = report(
                 f"{name} [disguised]",

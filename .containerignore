@@ -6,4 +6,6 @@ target/
 mock-server/
 tests/
 __pycache__/
+model/__pycache__/
+*.pyc
 .venv/

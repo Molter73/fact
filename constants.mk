@@ -5,9 +5,11 @@ FACT_VERSION ?= $(FACT_TAG)
 
 FACT_REGISTRY ?= quay.io/mmoltras/fact
 FACT_COMPENDIUM_REGISTRY ?= quay.io/mmoltras/fact-compendium
+FACT_CHECKER_REGISTRY ?= quay.io/mmoltras/fact-checker
 
 FACT_IMAGE_NAME ?= $(FACT_REGISTRY):$(FACT_TAG)
 FACT_COMPENDIUM_IMAGE_NAME ?= $(FACT_COMPENDIUM_REGISTRY):$(FACT_TAG)
+FACT_CHECKER_IMAGE_NAME ?= $(FACT_CHECKER_REGISTRY):$(FACT_TAG)
 
 CLANG_FMT ?= $(shell which clang-format)
 

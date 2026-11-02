@@ -19,6 +19,8 @@ DAEMONS = {
     "redis-server",
 }
 
+SESSION_DAEMONS = DAEMONS | {"sshd-session", "sshd-auth"}
+
 SENSITIVE_DIRS = ("/etc/", "/root/", "/boot/", "/var/spool/cron/", "/usr/lib/systemd/")
 SYSTEM_BIN_DIRS = ("/usr/bin/", "/usr/sbin/", "/bin/", "/sbin/", "/usr/local/bin/")
 WEBROOT = "/usr/share/wordpress/"
@@ -121,8 +123,10 @@ def extract(events, processes):
     execs.sort(key=lambda item: item[0])
     bursts = _sibling_bursts(execs)
     return [
-        _row(payload, procs, net[payload["upid"]], files[payload["upid"]], burst)
-        for (_, payload), burst in zip(execs, bursts)
+        build_row(
+            ts, payload, procs, net[payload["upid"]], files[payload["upid"]], burst
+        )
+        for (ts, payload), burst in zip(execs, bursts)
     ]
 
 
@@ -131,7 +135,7 @@ def _sibling_bursts(execs):
 
     Ten busy children in ten seconds reads differently than the same children
     spread over a maintenance cycle."""
-    recent = defaultdict(deque)
+    recent: defaultdict[int, deque[int]] = defaultdict(deque)
     bursts = [0] * len(execs)
     for index, (ts, payload) in enumerate(execs):
         window = recent[payload["parent_upid"]]
@@ -140,6 +144,41 @@ def _sibling_bursts(execs):
         bursts[index] = len(window)
         window.append(ts)
     return bursts
+
+
+class SiblingBursts:
+    """Streaming equivalent of `_sibling_bursts`.
+
+    Exec events are recorded in arrival order, so the burst count can be fixed
+    when the Exec is buffered rather than when the row is flushed."""
+
+    def __init__(self):
+        self._recent: defaultdict[int, deque[int]] = defaultdict(deque)
+
+    def record(self, parent_upid, ts):
+        window = self._recent[parent_upid]
+        while window and ts - window[0] > SIBLING_WINDOW_NS:
+            window.popleft()
+        burst = len(window)
+        window.append(ts)
+        return burst
+
+
+def build_row(ts_ns, payload, procs, net, files, burst=0):
+    row = _row(payload, procs, net, files, burst)
+    row["_exec_ts_ns"] = ts_ns
+    return row
+
+
+def session_id(row):
+    """Nearest session daemon, or the process itself when no daemon is known.
+
+    Using the daemon's upid keeps every child of one SSH connection (or one
+    php-fpm worker) in a single incident."""
+    for upid, comm in [(row["upid"], row["comm"]), *row.get("_ancestors", ())]:
+        if comm in SESSION_DAEMONS:
+            return upid
+    return row["upid"]
 
 
 def lineage(upid, procs):
@@ -208,6 +247,7 @@ def _row(payload, procs, net, files, burst=0):
     ancestors = lineage(payload["upid"], procs)
     parent = ancestors[0] if ancestors else {}
     parent_comm = parent.get("comm") or ""
+    parent_uid = parent.get("uid") if parent else None
     ancestor_comms = {a.get("comm") or "" for a in ancestors}
     package_ctx = bool((ancestor_comms | {comm}) & PACKAGE_MANAGERS)
 
@@ -264,7 +304,7 @@ def _row(payload, procs, net, files, burst=0):
         "uid": uid,
         "gid": payload.get("gid") or 0,
         "is_root": int(uid == 0),
-        "uid_delta": uid - (parent.get("uid") if parent else uid),
+        "uid_delta": uid - (parent_uid if parent_uid is not None else uid),
         "in_root_mount_ns": int(bool(payload.get("in_root_mount_ns"))),
         "login_uid_set": int(login_uid not in (None, 4294967295)),
         "n_args": len(args),

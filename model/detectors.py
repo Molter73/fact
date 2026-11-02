@@ -27,11 +27,18 @@ ESTIMATORS = {
     "knn": lambda: KnnDistance(k=3),
     "knn5": lambda: KnnDistance(k=5),
     "knn10": lambda: KnnDistance(k=10),
-    "ocsvm": lambda: OneClassSVM(kernel="rbf", gamma=0.1, nu=0.05),
+    "ocsvm": lambda: OneClassSVM(
+        kernel="rbf",
+        gamma=0.1,  # pyright: ignore[reportArgumentType]
+        nu=0.05,
+    ),
     "ocsvm-wide": lambda: OneClassSVM(kernel="rbf", gamma="scale", nu=0.05),
     "iforest": lambda: IsolationForest(n_estimators=300, random_state=0),
     "iforest-small": lambda: IsolationForest(
-        n_estimators=500, max_samples=256, max_features=0.5, random_state=0
+        n_estimators=500,
+        max_samples=256,  # pyright: ignore[reportArgumentType]
+        max_features=0.5,
+        random_state=0,
     ),
     "lof": lambda: LocalOutlierFactor(n_neighbors=20, novelty=True),
     "elliptic": lambda: EllipticEnvelope(support_fraction=0.9, random_state=0),

@@ -42,3 +42,5 @@ jobs:
       run: cargo +${{ matrix.rust-version }} clippy -- -D warnings
     - name: Test
       run: cargo +${{ matrix.rust-version }} test --all-features --all
+    - name: Checker tests
+      run: make -C model test

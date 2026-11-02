@@ -36,6 +36,7 @@ compendium:
 
 images:
 	make image compendium
+	make -C model image
 
 licenses:THIRD_PARTY_LICENSES.html
 
@@ -60,15 +61,17 @@ clean:
 lint:
 	cargo clippy --all-targets --all-features -- -D warnings
 	make -C tests lint
+	make -C model lint
 
 format-check:
 	cargo fmt --check
 	make -C fact-ebpf format-check
-	ruff format --diff tests/
+	ruff format --diff tests/ model/
 
 format:
 	cargo fmt
 	make -C fact-ebpf format
-	ruff format tests/
+	make -C model format
+	ruff format tests/ model/
 
 .PHONY: tag mock-server integration-tests image image-otel image-name licenses coverage lint clean
