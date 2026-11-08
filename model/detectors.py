@@ -1,12 +1,13 @@
 """Anomaly detectors. Higher scores mean more anomalous."""
 
+from sklearn.base import BaseEstimator
 from sklearn.covariance import EllipticEnvelope
 from sklearn.ensemble import IsolationForest
 from sklearn.neighbors import LocalOutlierFactor, NearestNeighbors
 from sklearn.svm import OneClassSVM
 
 
-class KnnDistance:
+class KnnDistance(BaseEstimator):
     """Mean distance to the k nearest benign rows.
 
     Unlike an RBF kernel this keeps ranking information far from the training
@@ -15,9 +16,12 @@ class KnnDistance:
     def __init__(self, k=3):
         self.k = k
 
-    def fit(self, x):
+    def fit(self, x, y=None):
         self._nn = NearestNeighbors(n_neighbors=self.k).fit(x)
         return self
+
+    def __sklearn_is_fitted__(self):
+        return hasattr(self, "_nn")
 
     def score_samples(self, x):
         return -self._nn.kneighbors(x)[0].mean(axis=1)

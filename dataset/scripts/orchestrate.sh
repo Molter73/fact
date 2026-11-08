@@ -9,6 +9,8 @@ SSH_TARGET=""
 RUN_MAINTENANCE=1
 RUN_ATTACKS=0
 ATTACKS_AFTER=60
+ATTACK_INTERVAL=300
+ATTACK_JITTER="${ATTACK_JITTER:-15}"
 ATTACKS_MANIFEST="${ATTACKS_MANIFEST:-attacks-manifest.jsonl}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -29,7 +31,9 @@ usage() {
     echo "  --ssh HOST        SSH target: workloads and attacks are delivered over it"
     echo "  --no-maintenance  Skip system-maintenance.sh (it writes /etc and /usr/bin via sudo)"
     echo "  --attacks         Run the attack techniques against the monitored host"
-    echo "  --attacks-after S Start the attacks S seconds in (default: 60)"
+    echo "  --attacks-after S Start the first attack round S seconds in (default: 60)"
+    echo "  --attack-interval S"
+    echo "                    Seconds between attack rounds (default: 300)"
     echo "  --attacks-manifest P"
     echo "                    Attack manifest output (default: $ATTACKS_MANIFEST)"
     exit 1
@@ -65,6 +69,10 @@ while [[ $# -gt 0 ]]; do
         ATTACKS_AFTER="$2"
         shift 2
         ;;
+    --attack-interval)
+        ATTACK_INTERVAL="$2"
+        shift 2
+        ;;
     --attacks-manifest)
         ATTACKS_MANIFEST="$2"
         shift 2
@@ -84,6 +92,11 @@ if [ "$RUN_ATTACKS" -eq 1 ] && [ "$ATTACKS_AFTER" -ge "$DURATION" ]; then
     RUN_ATTACKS=0
 fi
 
+if [ "$RUN_ATTACKS" -eq 1 ] && [ "$ATTACK_INTERVAL" -lt 1 ]; then
+    echo "--attack-interval must be at least 1 second" >&2
+    exit 1
+fi
+
 echo "=== Dataset Traffic Generator ==="
 echo "Duration:    ${DURATION}s"
 echo "Concurrency: ${CONCURRENCY}"
@@ -92,6 +105,10 @@ if [ -n "$SSH_TARGET" ]; then
     echo "Mode:        remote (SSH: ${SSH_TARGET})"
 else
     echo "Mode:        local (run on VM)"
+fi
+if [ "$RUN_ATTACKS" -eq 1 ]; then
+    echo "Attacks:     first round at ${ATTACKS_AFTER}s, then every ~${ATTACK_INTERVAL}s"
+    echo "Manifest:    ${ATTACKS_MANIFEST}"
 fi
 
 BROWSER_PIDS=()
@@ -180,23 +197,50 @@ start_sink() {
     fi
 }
 
-launch_attacks() {
-    [ "$RUN_ATTACKS" -eq 1 ] || return 0
-
-    sleep "$ATTACKS_AFTER"
-
-    echo ""
-    echo "=== attacks.sh starting ==="
-    start_sink
-
+run_attack_round() {
     if [ -n "$SSH_TARGET" ]; then
         # Run here and deliver each technique over its own ssh connection, so the
         # monitored host sees a remote login instead of a local script.
-        SSH_TARGET="$SSH_TARGET" "$SCRIPT_DIR/attacks.sh" "$DURATION" "$SITE_URL" &
-        CHILD_PIDS+=($!)
+        SSH_TARGET="$SSH_TARGET" "$SCRIPT_DIR/attacks.sh" "$DURATION" "$SITE_URL"
     else
-        launch_local "attacks.sh"
+        script_stream "attacks.sh" | bash -s -- "$DURATION" "$SITE_URL"
     fi
+}
+
+launch_attacks() {
+    [ "$RUN_ATTACKS" -eq 1 ] || return 0
+
+    mkdir -p "$(dirname "$ATTACKS_MANIFEST")"
+    : >"$ATTACKS_MANIFEST"
+
+    local base=$SECONDS
+    local round=$ATTACKS_AFTER
+    local jitter
+
+    if [ "$ATTACKS_AFTER" -gt 0 ]; then
+        sleep "$ATTACKS_AFTER"
+    fi
+
+    echo ""
+    echo "=== attacks.sh first round at ${ATTACKS_AFTER}s ==="
+    start_sink
+
+    while [ "$round" -lt "$DURATION" ]; do
+        local elapsed=$((SECONDS - base))
+        if [ "$elapsed" -lt "$round" ]; then
+            sleep $((round - elapsed))
+        fi
+
+        echo ""
+        echo "=== attacks.sh round starting at ${round}s ==="
+        run_attack_round || echo "Attack round failed; continuing" >&2
+
+        jitter=$((RANDOM % (2 * ATTACK_JITTER + 1) - ATTACK_JITTER))
+        round=$((round + ATTACK_INTERVAL + jitter))
+        if [ "$round" -le "$((SECONDS - base))" ]; then
+            round=$((SECONDS - base + 1))
+        fi
+    done
 }
 
 fetch_attacks_manifest() {
@@ -239,13 +283,6 @@ if [ -n "$SSH_TARGET" ]; then
     echo ""
     echo "Capturing for ${DURATION}s... (Ctrl+C to stop early)"
     echo ""
-
-    if [ "$RUN_ATTACKS" -eq 1 ]; then
-        launch_attacks
-        sleep $((DURATION - ATTACKS_AFTER))
-    else
-        sleep "$DURATION"
-    fi
 else
     launch_local "background-noise.sh"
     BG_PID=$!
@@ -280,8 +317,12 @@ else
     echo ""
     echo "Capturing for ${DURATION}s... (Ctrl+C to stop early)"
     echo ""
-
-    launch_attacks
-
-    wait "${CHILD_PIDS[@]}" 2>/dev/null || true
 fi
+
+if [ "$RUN_ATTACKS" -eq 1 ]; then
+    launch_attacks
+else
+    sleep "$DURATION"
+fi
+
+wait "${CHILD_PIDS[@]}" 2>/dev/null || true

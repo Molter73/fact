@@ -49,7 +49,7 @@ def _env_int(name: str, default: int) -> int:
 
 @dataclass(frozen=True)
 class Settings:
-    mongo_uri: str = URI
+    mongo_uri: str | None = URI
     database: str = "fact"
     poll_interval: float = 1.0
     grace_seconds: float = 30.0
@@ -155,6 +155,7 @@ class CheckerEngine:
         self.lookup = lookup
         self.update_processes = update_processes
         self.siblings = features.SiblingBursts()
+        self.exec_procs = {}
         self.buffers = {}
 
     def _buffer(self, host, upid):
@@ -192,6 +193,7 @@ class CheckerEngine:
     def _ingest_process(self, process, host, ts):
         if "Exec" in process:
             payload = process["Exec"]
+            self.exec_procs[int(payload["upid"])] = payload
             buffer = self._buffer(host, payload["upid"])
             burst = self.siblings.record(payload.get("parent_upid", 0), ts)
             buffer.execs.append((ts, payload, burst))
@@ -257,6 +259,7 @@ class CheckerEngine:
                     buffer.net,
                     buffer.files,
                     burst,
+                    exec_procs=self.exec_procs,
                 )
                 row["_host"] = buffer.host
                 rows.append(row)
@@ -270,10 +273,9 @@ class CheckerEngine:
 class Scorer:
     def __init__(self, artifact):
         self.rarity = artifact["rarity"]
-        self.estimator = artifact["estimator"]
-        self.scaler = artifact["scaler"]
         self.threshold = float(artifact["threshold"])
         self.features = list(artifact["features"])
+        self.pipeline = artifact["pipeline"]
 
     @classmethod
     def load(cls, path):
@@ -286,7 +288,7 @@ class Scorer:
         matrix = np.asarray(
             [[float(row[name]) for name in self.features] for row in rows], dtype=float
         )
-        return (-self.estimator.score_samples(self.scaler.transform(matrix))).tolist()
+        return (-self.pipeline.score_samples(matrix)).tolist()
 
 
 def build_alert_upsert(row, score, host, strategy=fingerprint.DEFAULT):

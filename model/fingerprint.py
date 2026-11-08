@@ -14,21 +14,48 @@ HEX = re.compile(r"\b[0-9a-f]{6,}\b", re.IGNORECASE)
 LONG_NUM = re.compile(r"\b\d{8,}\b")
 INODE_SUFFIX = re.compile(r";[0-9a-f]{6,}$", re.IGNORECASE)
 EXT = re.compile(r"(\.[A-Za-z0-9]{1,8})$")
+DATE_YEAR = re.compile(r"^(?:19|20)\d{2}$")
+DATE_MONTH = re.compile(r"^(?:0[1-9]|1[0-2])$")
+TEMP_SUFFIX = re.compile(
+    r"([._-])(?=[A-Za-z0-9]{6,}$)(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*[0-9])"
+    r"[A-Za-z0-9]*$"
+)
 
 
 def _text(value):
     value = TAG.sub("<tag>", value)
     value = UUID.sub("<uuid>", value)
+    value = TEMP_SUFFIX.sub(r"\1<tmp>", value)
     value = LONG_NUM.sub("<n>", value)
     value = HEX.sub("<hex>", value)
     return value
+
+
+def component_pattern(component):
+    component = INODE_SUFFIX.sub("", component)
+    return re.sub(r"\d+", "<n>", _text(component))
+
+
+def _path_components(path):
+    out = []
+    previous = None
+    for component in path.split("/"):
+        if DATE_YEAR.fullmatch(component):
+            value = "<year>"
+        elif DATE_MONTH.fullmatch(component) and previous == "<year>":
+            value = "<month>"
+        else:
+            value = component_pattern(component)
+        out.append(value)
+        previous = value
+    return out
 
 
 def basename_pattern(path):
     if not path:
         return ""
     path = INODE_SUFFIX.sub("", path.rstrip("/"))
-    base = path.rsplit("/", 1)[-1]
+    base = TEMP_SUFFIX.sub(r"\1<tmp>", path.rsplit("/", 1)[-1])
     match = EXT.search(base)
     ext = match.group(1).lower() if match else ""
     stem = base[: -len(ext)] if ext else base
@@ -43,22 +70,27 @@ def path_template(path):
     if "/" not in path:
         return basename_pattern(path)
     directory, base = path.rsplit("/", 1)
+    base = TEMP_SUFFIX.sub(r"\1<tmp>", base)
     match = EXT.search(base)
     ext = match.group(1).lower() if match else ""
+    directory = "/".join(_path_components(directory))
     return f"{directory}/<name>{ext}"
 
 
 def _argv_token(token):
     if token.startswith("-") and "=" in token:
         return token.split("=", 1)[0] + "=<value>"
-    if token.startswith("/"):
+    if "/" in token:
         return path_template(token)
     return re.sub(r"\d+", "<n>", _text(token))
 
 
 def argv_template(row):
     return "\x00".join(
-        [row.get("comm", ""), *(_argv_token(arg) for arg in row.get("args", [])[1:])]
+        [
+            _text(row.get("comm", "")),
+            *(_argv_token(arg) for arg in row.get("args", [])[1:]),
+        ]
     )
 
 

@@ -11,6 +11,7 @@
 # ///
 """Unit tests for checker helpers that do not need a live MongoDB."""
 
+import math
 import unittest
 from datetime import UTC, datetime, timedelta
 
@@ -50,6 +51,16 @@ class FingerprintTests(unittest.TestCase):
             fingerprint.path_template("/etc/cron.d/atk-x-1-2"), "/etc/cron.d/<name>"
         )
         self.assertEqual(fingerprint.path_template("/tmp/a.tar.gz"), "/tmp/<name>.gz")
+        self.assertEqual(
+            fingerprint.path_template(
+                "/usr/share/wordpress/wp-content/uploads/2026/11/photo.jpg"
+            ),
+            "/usr/share/wordpress/wp-content/uploads/<year>/<month>/<name>.jpg",
+        )
+        self.assertEqual(
+            fingerprint.basename_pattern("/tmp/rpm-tmp.Z4ziBW"), "rpm-tmp.<tmp>"
+        )
+        self.assertEqual(fingerprint._argv_token("/proc/12345/exe"), "/proc/<n>/<name>")
 
     def test_candidates_differ_and_stay_stable(self):
         row = {
@@ -94,6 +105,93 @@ class SessionTests(unittest.TestCase):
         row = row_for(process(11, "sh", 10, uid=48), procs)
         self.assertEqual(features.session_id(row), 10)
 
+    def test_lineage_prefers_exec_parent_over_snapshot(self):
+        procs = {
+            1: process(1, "systemd"),
+            2: process(2, "sshd-session", 1),
+            3: process(3, "systemd"),
+            4: process(4, "bash", 3, uid=1000),
+        }
+        payload = process(4, "bash", 2, uid=1000)
+        row = features.build_row(1, payload, procs, [], [], exec_procs={4: payload})
+        self.assertEqual(row["parent_comm"], "sshd-session")
+        self.assertEqual(row["_ancestors"][0], (2, "sshd-session"))
+
+
+class FeatureTests(unittest.TestCase):
+    def test_package_manager_activity_is_gated(self):
+        procs = {
+            1: process(1, "bash", 0, uid=1000),
+            2: process(2, "sudo", 1, uid=1000),
+            3: process(3, "dnf", 2, uid=0),
+        }
+        payload = process(3, "dnf", 2, uid=0)
+        net = [
+            {
+                "Connect": {
+                    "remote": {
+                        "addr": {"V4": [203, 0, 113, 5]},
+                        "port": 443,
+                    }
+                }
+            }
+        ]
+        files = [
+            {"Creation": {"filename": "/usr/bin/tool"}},
+            {"Creation": {"filename": "/etc/tool.conf"}},
+        ]
+        row = row_for(payload, procs, files=files, net=net)
+        self.assertEqual(row["package_ctx"], 1)
+        self.assertEqual(row["n_connect"], 0)
+        self.assertEqual(row["n_file_create"], 0)
+        self.assertEqual(row["n_file_sysbin_nonpkg"], 0)
+        self.assertEqual(row["n_file_sensitive_nonpkg"], 0)
+
+    def test_security_features(self):
+        procs = {1: process(1, "bash", 0, uid=1000)}
+        payload = process(1, "tee", 0, uid=1000)
+        files = [
+            {"Creation": {"filename": "/etc/cron.d/job"}},
+            {"Creation": {"filename": "/usr/share/wordpress/wp-content/x.php"}},
+            {
+                "Chmod": {
+                    "inner": {"filename": "/usr/bin/tool"},
+                    "new_mode": 0o4755,
+                }
+            },
+        ]
+        row = row_for(payload, procs, files=files)
+        self.assertEqual(row["n_file_autostart"], math.log1p(1))
+        self.assertEqual(row["n_file_webshell"], math.log1p(1))
+        self.assertEqual(row["n_setuid"], math.log1p(1))
+
+    def test_volatile_values_do_not_change_features(self):
+        procs = {1: process(1, "bash", 0, uid=1000)}
+
+        def make(url, path):
+            payload = {**process(2, "curl", 1, 1000), "args": ["curl", url]}
+            files = [{"Creation": {"filename": path}}]
+            return features.build_row(1, payload, procs, [], files)
+
+        left = make(
+            "http://10.10.0.10/atk-curl-1-1",
+            "/usr/share/wordpress/wp-content/uploads/2026/11/photo-123456.jpg",
+        )
+        right = make(
+            "http://10.10.0.10/atk-curl-9-9",
+            "/usr/share/wordpress/wp-content/uploads/2025/10/photo-654321.jpg",
+        )
+        rarity = features.build_rarity([left])
+        features.apply_rarity([left, right], rarity)
+        self.assertEqual(
+            [left[name] for name in features.FEATURES],
+            [right[name] for name in features.FEATURES],
+        )
+
+    def test_depth_is_not_a_feature(self):
+        self.assertNotIn("depth", features.FEATURES)
+        self.assertNotIn("depth_from_session", features.FEATURES)
+
 
 class EngineTests(unittest.TestCase):
     def test_multiple_execs_share_buffered_events(self):
@@ -125,7 +223,7 @@ class EngineTests(unittest.TestCase):
             engine.ingest(event)
         rows = engine.flush(0, force=True)
         self.assertEqual([row["comm"] for row in rows], ["env", "php"])
-        self.assertTrue(all(row["n_file_create"] == 1 for row in rows))
+        self.assertTrue(all(row["n_file_create"] == math.log1p(1) for row in rows))
         self.assertTrue(all(row["_host"] == "host" for row in rows))
 
     def test_grace_keeps_recent_buffer(self):

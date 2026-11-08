@@ -5,7 +5,9 @@
 
 import re
 from collections import Counter, defaultdict, deque
-from math import log
+from math import log, log1p
+
+import fingerprint
 
 DAEMONS = {
     "systemd",
@@ -24,6 +26,17 @@ SESSION_DAEMONS = DAEMONS | {"sshd-session", "sshd-auth"}
 SENSITIVE_DIRS = ("/etc/", "/root/", "/boot/", "/var/spool/cron/", "/usr/lib/systemd/")
 SYSTEM_BIN_DIRS = ("/usr/bin/", "/usr/sbin/", "/bin/", "/sbin/", "/usr/local/bin/")
 WEBROOT = "/usr/share/wordpress/"
+AUTOSTART_DIRS = (
+    "/etc/cron",
+    "/var/spool/cron",
+    "/etc/systemd/",
+    "/etc/profile",
+    "/etc/rc",
+    "/.config/autostart/",
+    "/etc/xdg/autostart/",
+)
+SSH_CONFIG_DIRS = ("/etc/ssh/", "/.ssh/")
+WRITE_OPS = {"Creation", "Rename", "Chmod", "Chown", "SetXattr", "RemoveXattr"}
 
 PACKAGE_MANAGERS = {
     "dnf",
@@ -53,18 +66,11 @@ RARITY_FEATURES = (
     "comm_rarity",
     "exe_rarity",
     "pair_rarity",
-    "argv_rarity",
     "argv_excess",
-    "dir_rarity",
-    "comm_dir_rarity",
-    "path_rarity",
     "dest_rarity",
-    "ext_rarity",
-    "ext_comm_rarity",
 )
 
 FEATURES = [
-    "depth",
     "uid",
     "gid",
     "is_root",
@@ -92,12 +98,15 @@ FEATURES = [
     "n_file_rename",
     "n_file_open",
     "n_file_xattr",
-    "n_file_sensitive",
-    "n_file_system_bin",
     "n_file_webroot",
     "n_file_sysbin_nonpkg",
     "n_setuid",
+    "n_file_sensitive_nonpkg",
+    "n_file_autostart",
+    "n_file_ssh_config",
+    "n_file_webshell",
     "sibling_burst",
+    "package_ctx",
     "unseen_comm",
     "unseen_pair",
     *RARITY_FEATURES,
@@ -121,10 +130,17 @@ def extract(events, processes):
             files[data["File"]["process"]["upid"]].append(data["File"]["file"])
 
     execs.sort(key=lambda item: item[0])
+    exec_procs = {payload["upid"]: payload for _, payload in execs}
     bursts = _sibling_bursts(execs)
     return [
         build_row(
-            ts, payload, procs, net[payload["upid"]], files[payload["upid"]], burst
+            ts,
+            payload,
+            procs,
+            net[payload["upid"]],
+            files[payload["upid"]],
+            burst,
+            exec_procs=exec_procs,
         )
         for (ts, payload), burst in zip(execs, bursts)
     ]
@@ -164,8 +180,8 @@ class SiblingBursts:
         return burst
 
 
-def build_row(ts_ns, payload, procs, net, files, burst=0):
-    row = _row(payload, procs, net, files, burst)
+def build_row(ts_ns, payload, procs, net, files, burst=0, exec_procs=None):
+    row = _row(payload, procs, net, files, burst, exec_procs)
     row["_exec_ts_ns"] = ts_ns
     return row
 
@@ -181,18 +197,28 @@ def session_id(row):
     return row["upid"]
 
 
-def lineage(upid, procs):
+def lineage(upid, procs, exec_procs=None):
+    """Build the parent chain from event-time Exec parents when available.
+
+    The process snapshot can be stale by the time a row is flushed; in
+    particular a workload's root shell is often reparented in the snapshot but
+    its Exec payload still names the real SSH session daemon."""
+    exec_procs = exec_procs or {}
     chain = []
     seen = set()
-    current = procs.get(upid, {}).get("parent_upid")
+    current = _proc(upid, procs, exec_procs).get("parent_upid")
     while current and current not in seen:
         seen.add(current)
-        parent = procs.get(current)
+        parent = _proc(current, procs, exec_procs)
         if not parent:
             break
         chain.append(parent)
         current = parent.get("parent_upid")
     return chain
+
+
+def _proc(upid, procs, exec_procs):
+    return exec_procs.get(upid) or procs.get(upid, {})
 
 
 def _addr(value):
@@ -233,23 +259,33 @@ def _paths(node):
 
 def _ext(path):
     base = path.rsplit("/", 1)[-1]
-    if "." not in base:
-        return ""
-    return "." + base.rsplit(".", 1)[1].lower()
+    match = fingerprint.EXT.search(base)
+    return match.group(1).lower() if match else ""
 
 
-def _row(payload, procs, net, files, burst=0):
+def _set_rarity_keys(row):
+    comm = fingerprint._text(row["comm"])
+    parent = fingerprint._text(row["parent_comm"])
+    row["_rarity_comm"] = comm
+    row["_rarity_parent_comm"] = parent
+    row["_rarity_exe"] = fingerprint.path_template(row["exe_path"])
+    row["_argv"] = fingerprint.argv_template(row)
+    row["_pair"] = f"{parent}|{comm}"
+
+
+def _row(payload, procs, net, files, burst=0, exec_procs=None):
     comm = payload.get("comm") or ""
     exe = payload.get("exe_path") or ""
     args = [a for a in (payload.get("args") or []) if isinstance(a, str)]
     uid = payload.get("uid") or 0
 
-    ancestors = lineage(payload["upid"], procs)
+    ancestors = lineage(payload["upid"], procs, exec_procs)
     parent = ancestors[0] if ancestors else {}
     parent_comm = parent.get("comm") or ""
     parent_uid = parent.get("uid") if parent else None
     ancestor_comms = {a.get("comm") or "" for a in ancestors}
     package_ctx = bool((ancestor_comms | {comm}) & PACKAGE_MANAGERS)
+    package_scale = 0.0 if package_ctx else 1.0
 
     connects = accepts = nonloop = 0
     ports = set()
@@ -274,7 +310,7 @@ def _row(payload, procs, net, files, burst=0):
     ops = Counter()
     paths = []
     sensitive = system_bin = webroot = setuid = 0
-    sysbin_nonpkg = 0
+    sysbin_nonpkg = sensitive_nonpkg = autostart = ssh_config = webshell = 0
     for group in files:
         for op, node in group.items():
             ops[op] += 1
@@ -288,19 +324,25 @@ def _row(payload, procs, net, files, burst=0):
                 sysbin_nonpkg += int(
                     target.startswith(SYSTEM_BIN_DIRS) and not package_ctx
                 )
+                sensitive_nonpkg += int(
+                    target.startswith(SENSITIVE_DIRS) and not package_ctx
+                )
+                if op in WRITE_OPS:
+                    autostart += target.startswith(AUTOSTART_DIRS)
+                    ssh_config += target.startswith(SSH_CONFIG_DIRS)
+                    webshell += int(
+                        target.startswith(WEBROOT) and _ext(target) == ".php"
+                    )
 
     args_text = args[1:]
     login_uid = payload.get("login_uid")
-    dirs = sorted({p.rsplit("/", 1)[0] for p in paths if "/" in p})
-    exts = sorted({_ext(p) for p in paths})
-    return {
+    row = {
         "upid": payload["upid"],
         "parent_upid": payload.get("parent_upid") or 0,
         "comm": comm,
         "parent_comm": parent_comm,
         "exe_path": exe,
         "args": args,
-        "depth": len(ancestors),
         "uid": uid,
         "gid": payload.get("gid") or 0,
         "is_root": int(uid == 0),
@@ -316,34 +358,34 @@ def _row(payload, procs, net, files, burst=0):
         "self_is_sudo": int(comm == "sudo"),
         "parent_is_root": int((parent.get("uid") or 0) == 0),
         "parent_uid": parent.get("uid") or 0,
-        "n_connect": connects,
-        "n_accept": accepts,
-        "n_connect_nonloop": nonloop,
-        "n_remote_ports": len(ports),
-        "n_remote_hosts": len(hosts),
-        "n_file_create": ops["Creation"],
-        "n_file_unlink": ops["Unlink"],
-        "n_file_chmod": ops["Chmod"],
-        "n_file_chown": ops["Chown"],
-        "n_file_rename": ops["Rename"],
-        "n_file_open": ops["Open"],
-        "n_file_xattr": ops["SetXattr"] + ops["RemoveXattr"],
-        "n_file_sensitive": int(sensitive),
-        "n_file_system_bin": int(system_bin),
-        "n_file_webroot": int(webroot),
-        "n_file_sysbin_nonpkg": int(sysbin_nonpkg),
-        "n_setuid": setuid,
-        "sibling_burst": burst,
+        "n_connect": log1p(connects) * package_scale,
+        "n_accept": log1p(accepts) * package_scale,
+        "n_connect_nonloop": log1p(nonloop) * package_scale,
+        "n_remote_ports": log1p(len(ports)) * package_scale,
+        "n_remote_hosts": log1p(len(hosts)) * package_scale,
+        "n_file_create": log1p(ops["Creation"]) * package_scale,
+        "n_file_unlink": log1p(ops["Unlink"]) * package_scale,
+        "n_file_chmod": log1p(ops["Chmod"]) * package_scale,
+        "n_file_chown": log1p(ops["Chown"]) * package_scale,
+        "n_file_rename": log1p(ops["Rename"]) * package_scale,
+        "n_file_open": log1p(ops["Open"]) * package_scale,
+        "n_file_xattr": log1p(ops["SetXattr"] + ops["RemoveXattr"]) * package_scale,
+        "n_file_webroot": log1p(webroot),
+        "n_file_sysbin_nonpkg": log1p(sysbin_nonpkg),
+        "n_setuid": log1p(setuid),
+        "n_file_sensitive_nonpkg": log1p(sensitive_nonpkg),
+        "n_file_autostart": log1p(autostart),
+        "n_file_ssh_config": log1p(ssh_config),
+        "n_file_webshell": log1p(webshell),
+        "sibling_burst": log1p(burst) * package_scale,
+        "package_ctx": int(package_ctx),
         "_paths": paths,
         "_dests": dests,
-        "_dirs": dirs,
-        "_exts": exts,
-        "_ext_comm": [f"{comm}|{e}" for e in exts],
-        "_comm_dir": [f"{comm}|{d}" for d in dirs],
-        "_pair": f"{parent_comm}|{comm}",
-        "_argv": f"{comm}\x00" + "\x00".join(args_text),
+        "_package_ctx": package_ctx,
         "_ancestors": [(a["upid"], a.get("comm") or "") for a in ancestors],
     }
+    _set_rarity_keys(row)
+    return row
 
 
 def _keyed(row, key):
@@ -355,17 +397,12 @@ def build_rarity(rows):
     tables = {
         key: Counter(v for r in rows for v in _keyed(r, key))
         for key in (
-            "comm",
-            "parent_comm",
-            "exe_path",
+            "_rarity_comm",
+            "_rarity_parent_comm",
+            "_rarity_exe",
             "_pair",
             "_argv",
-            "_dirs",
-            "_paths",
             "_dests",
-            "_exts",
-            "_ext_comm",
-            "_comm_dir",
         )
     }
     totals = {key: sum(table.values()) or 1 for key, table in tables.items()}
@@ -374,8 +411,9 @@ def build_rarity(rows):
     argv_totals = defaultdict(float)
     argv_counts = Counter()
     for row in rows:
-        argv_totals[row["comm"]] += _score(model, "_argv", row["_argv"])
-        argv_counts[row["comm"]] += 1
+        comm = row["_rarity_comm"]
+        argv_totals[comm] += _score(model, "_argv", row["_argv"])
+        argv_counts[comm] += 1
     model["comm_argv_mean"] = {
         comm: argv_totals[comm] / n for comm, n in argv_counts.items()
     }
@@ -389,34 +427,38 @@ def _score(model, key, value):
 
 def apply_rarity(rows, model):
     for row in rows:
-        row["comm_rarity"] = _score(model, "comm", row["comm"])
-        row["parent_comm_rarity"] = _score(model, "parent_comm", row["parent_comm"])
-        row["exe_rarity"] = _score(model, "exe_path", row["exe_path"])
-        row["pair_rarity"] = _score(model, "_pair", row["_pair"])
-        row["argv_rarity"] = _score(model, "_argv", row["_argv"])
-        row["argv_excess"] = row["argv_rarity"] - model["comm_argv_mean"].get(
-            row["comm"], model["argv_mean"]
+        gated = bool(row.get("_package_ctx"))
+        row["comm_rarity"] = (
+            0.0 if gated else _score(model, "_rarity_comm", row["_rarity_comm"])
         )
-        row["dir_rarity"] = max(
-            (_score(model, "_dirs", d) for d in row["_dirs"]), default=0.0
+        row["parent_comm_rarity"] = (
+            0.0
+            if gated
+            else _score(model, "_rarity_parent_comm", row["_rarity_parent_comm"])
         )
-        row["comm_dir_rarity"] = max(
-            (_score(model, "_comm_dir", d) for d in row["_comm_dir"]), default=0.0
+        row["exe_rarity"] = (
+            0.0 if gated else _score(model, "_rarity_exe", row["_rarity_exe"])
         )
-        row["path_rarity"] = max(
-            (_score(model, "_paths", p) for p in row["_paths"]), default=0.0
+        row["pair_rarity"] = 0.0 if gated else _score(model, "_pair", row["_pair"])
+        row["argv_rarity"] = 0.0 if gated else _score(model, "_argv", row["_argv"])
+        row["argv_excess"] = (
+            0.0
+            if gated
+            else row["argv_rarity"]
+            - model["comm_argv_mean"].get(row["_rarity_comm"], model["argv_mean"])
         )
-        row["dest_rarity"] = max(
-            (_score(model, "_dests", d) for d in row["_dests"]), default=0.0
+        row["dest_rarity"] = (
+            0.0
+            if gated
+            else max((_score(model, "_dests", d) for d in row["_dests"]), default=0.0)
         )
-        row["ext_rarity"] = max(
-            (_score(model, "_exts", e) for e in row["_exts"]), default=0.0
+        row["unseen_comm"] = int(
+            not gated
+            and model["tables"]["_rarity_comm"].get(row["_rarity_comm"], 0) == 0
         )
-        row["ext_comm_rarity"] = max(
-            (_score(model, "_ext_comm", e) for e in row["_ext_comm"]), default=0.0
+        row["unseen_pair"] = int(
+            not gated and model["tables"]["_pair"].get(row["_pair"], 0) == 0
         )
-        row["unseen_comm"] = int(model["tables"]["comm"].get(row["comm"], 0) == 0)
-        row["unseen_pair"] = int(model["tables"]["_pair"].get(row["_pair"], 0) == 0)
     return rows
 
 
@@ -520,10 +562,6 @@ def disguise_rows(rows):
         copy = dict(row)
         copy["args"] = [TAG.sub(_disguise, a) for a in row["args"]]
         copy["_paths"] = [TAG.sub(_disguise, p) for p in row["_paths"]]
-        copy["_dirs"] = sorted(
-            {p.rsplit("/", 1)[0] for p in copy["_paths"] if "/" in p}
-        )
-        copy["_exts"] = sorted({_ext(p) for p in copy["_paths"]})
-        copy["_argv"] = row["comm"] + "\x00" + "\x00".join(copy["args"][1:])
+        _set_rarity_keys(copy)
         out.append(copy)
     return out

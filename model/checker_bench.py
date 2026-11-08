@@ -65,13 +65,6 @@ def find_dump(explicit, names):
     raise SystemExit(f"none of {names} found under dataset/dumps")
 
 
-def event_key(event):
-    value = event.get("_id")
-    if isinstance(value, dict):
-        return value.get("$oid") or str(value)
-    return str(value)
-
-
 def run_stream(events, processes, grace):
     engine = checker.CheckerEngine(
         processes,
@@ -79,7 +72,7 @@ def run_stream(events, processes, grace):
         update_processes=False,
     )
     rows = []
-    for event in sorted(events, key=event_key):
+    for event in sorted(events, key=lambda event: int(event["timestamp"])):
         engine.ingest(event)
         rows.extend(engine.flush(int(event["timestamp"])))
     rows.extend(engine.flush(0, force=True))
@@ -348,7 +341,7 @@ def dataset_report(data):
         "attack_rows": sum(data.labels),
         "excluded_rows": sum(data.excluded),
         "threshold": data.scorer.threshold,
-        "model": data.scorer.estimator.__class__.__name__,
+        "model": data.scorer.pipeline[-1].__class__.__name__,
     }
 
 
