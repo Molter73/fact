@@ -13,11 +13,9 @@
 capture containing injected attacks, and compare them at a fixed false-positive
 budget. Attack labels are only used to measure recall, never to fit.
 
-The benign capture is split chronologically into fit, calibrate and test slices.
-Rarity tables, the scaler and the detector are built on the fit slice only; the
-threshold comes from the calibrate slice at the target FPR; the test slice is
-held out for the reported FPR. When the calibration slice is empty, group-aware
-out-of-fold scores are used so kNN never sees a row as its own neighbour."""
+A random fraction of the benign capture is held out for calibration; rarity
+tables, the scaler and the detector are built on the remaining rows. The
+threshold comes from the calibration slice at the target FPR."""
 
 import argparse
 import json
@@ -27,15 +25,13 @@ from pathlib import Path
 
 import joblib
 import numpy as np
-from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import GroupKFold, KFold
+from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 import capture
 import detectors
 import features
-import fingerprint
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -45,39 +41,14 @@ MANIFEST = ROOT / "dataset" / "attacks-manifest.jsonl"
 
 ESTIMATORS = detectors.ESTIMATORS
 DEFAULT_MODELS = detectors.DEFAULT_MODELS
-DEFAULT_SPLIT = "0.5,0.25,0.25"
+CALIBRATION_SEED = 0
 
 Z_95 = 1.959963984540054
 
 
-def load_rows(source, warmup=0.0, cooldown=0.0, max_duration=0.0):
+def load_rows(source):
     rows = features.extract(*capture.load_capture(source))
     rows.sort(key=lambda row: row["_exec_ts_ns"])
-    if not rows:
-        return rows
-    start = rows[0]["_exec_ts_ns"]
-    if max_duration:
-        cutoff = start + int(max_duration * 1e9)
-        kept = [row for row in rows if row["_exec_ts_ns"] < cutoff]
-        print(
-            f"  {source}: discard {len(rows) - len(kept)} execs after {max_duration}s"
-        )
-        rows = kept
-    if warmup:
-        cutoff = start + int(warmup * 1e9)
-        kept = [row for row in rows if row["_exec_ts_ns"] >= cutoff]
-        print(f"  {source}: discard {len(rows) - len(kept)} warm-up execs ({warmup}s)")
-        rows = kept
-    if cooldown and rows:
-        end = (
-            start + int(max_duration * 1e9) if max_duration else rows[-1]["_exec_ts_ns"]
-        )
-        cutoff = end - int(cooldown * 1e9)
-        kept = [row for row in rows if row["_exec_ts_ns"] < cutoff]
-        print(
-            f"  {source}: discard {len(rows) - len(kept)} cooldown execs ({cooldown}s)"
-        )
-        rows = kept
     return rows
 
 
@@ -88,53 +59,13 @@ def read_manifest(path):
         return [json.loads(line) for line in fh if line.strip()]
 
 
-def parse_split(text):
-    try:
-        fractions = [float(part) for part in text.split(",")]
-    except ValueError as exc:
-        raise SystemExit(f"--split: cannot parse {text!r}") from exc
-    if len(fractions) != 3:
-        raise SystemExit("--split needs three comma-separated fractions: fit,cal,test")
-    if any(value < 0 for value in fractions):
-        raise SystemExit("--split fractions must be non-negative")
-    if abs(sum(fractions) - 1.0) > 1e-6:
-        raise SystemExit("--split fractions must sum to 1")
-    return fractions
-
-
-def split_rows(rows, fractions):
-    first = int(len(rows) * fractions[0])
-    second = int(len(rows) * (fractions[0] + fractions[1]))
-    return rows[:first], rows[first:second], rows[second:]
-
-
-def parse_holdout(text):
-    sources = [part.strip() for part in text.split(",") if part.strip()]
-    if len(sources) != 2:
-        raise SystemExit("--holdout needs two comma-separated captures: calibrate,test")
-    return sources
-
-
-def prepare_benign(args):
-    if args.holdout:
-        calibrate_source, test_source = parse_holdout(args.holdout)
-        fit_rows = load_rows(args.train, args.warmup, args.cooldown, args.max_duration)
-        calibrate_rows = load_rows(
-            calibrate_source, args.warmup, args.cooldown, args.max_duration
-        )
-        test_rows = load_rows(
-            test_source, args.warmup, args.cooldown, args.max_duration
-        )
-        note = f"holdout {calibrate_source},{test_source}"
-    else:
-        fractions = parse_split(args.split or DEFAULT_SPLIT)
-        rows = load_rows(args.train, args.warmup, args.cooldown, args.max_duration)
-        fit_rows, calibrate_rows, test_rows = split_rows(rows, fractions)
-        note = (
-            f"split {fractions[0]:.2f}/{fractions[1]:.2f}/{fractions[2]:.2f} "
-            f"of {args.train}"
-        )
-    return fit_rows, calibrate_rows, test_rows, note
+def split_calibration(rows, fraction):
+    count = int(len(rows) * fraction)
+    rng = np.random.default_rng(CALIBRATION_SEED)
+    picked = set(rng.permutation(len(rows))[:count].tolist())
+    fit_rows = [row for i, row in enumerate(rows) if i not in picked]
+    calibrate_rows = [row for i, row in enumerate(rows) if i in picked]
+    return fit_rows, calibrate_rows
 
 
 def calibrate_threshold(scores, target_fpr):
@@ -204,30 +135,6 @@ def score(pipeline, rows):
     return -pipeline.score_samples(matrix)
 
 
-def oof_scores(name, fit_rows, fit_x):
-    """Group-aware out-of-fold scores so a row is never its own neighbour.
-
-    Used only when a chronological calibration slice is unavailable. Folds are
-    grouped by session so children of one shell do not leak across folds."""
-    groups = np.asarray([features.session_id(row) for row in fit_rows])
-    unique = len(set(groups.tolist()))
-    if unique < 2:
-        folds = min(5, len(fit_x))
-        if folds < 2:
-            raise SystemExit("not enough rows to build out-of-fold scores")
-        splitter = KFold(n_splits=folds)
-        splits = splitter.split(fit_x)
-    else:
-        splitter = GroupKFold(n_splits=min(5, unique))
-        splits = splitter.split(fit_x, groups=groups)
-
-    scores = np.full(len(fit_x), np.nan)
-    for train_index, test_index in splits:
-        fold = make_pipeline(name).fit(fit_x[train_index])
-        scores[test_index] = -fold.score_samples(fit_x[test_index])
-    return scores
-
-
 def wilson(successes, total, z=Z_95):
     """Binomial proportion and its Wilson score confidence interval.
 
@@ -240,28 +147,6 @@ def wilson(successes, total, z=Z_95):
     center = (p + z * z / (2 * total)) / denom
     half = z * sqrt(p * (1 - p) / total + z * z / (4 * total * total)) / denom
     return p, max(0.0, center - half), min(1.0, center + half)
-
-
-def operational_fpr(scores, threshold, rows):
-    sessions = defaultdict(lambda: [0, 0])
-    fingerprints = set()
-    fired = set()
-    for row, value in zip(rows, scores):
-        session = features.session_id(row)
-        sessions[session][0] += 1
-        key = fingerprint.fingerprint(row)
-        fingerprints.add(key)
-        if value >= threshold:
-            sessions[session][1] += 1
-            fired.add(key)
-    flagged = sum(1 for total, hits in sessions.values() if hits)
-    return {
-        "sessions": len(sessions),
-        "flagged_sessions": flagged,
-        "session_rate": flagged / len(sessions) if sessions else 0.0,
-        "alert_keys": len(fired),
-        "fingerprints": len(fingerprints),
-    }
 
 
 def technique_recall(instances, scores, threshold, index):
@@ -284,8 +169,13 @@ def technique_recall(instances, scores, threshold, index):
 def report_attack(
     name, scores, threshold, labels, excluded, instances, index, rows, top=0
 ):
-    benign = (np.asarray(labels) == 0) & ~np.asarray(excluded)
-    attack = np.asarray(labels) == 1
+    scores = np.asarray(scores)
+    labels = np.asarray(labels)
+    excluded = np.asarray(excluded)
+    benign = (labels == 0) & ~excluded
+    attack = labels == 1
+    kept = ~excluded
+    f1 = float(f1_score(labels[kept], scores[kept] >= threshold, zero_division=0))
     fpr = float((scores[benign] >= threshold).mean()) if benign.any() else 0.0
     hits = int((scores[attack] >= threshold).sum())
     total = int(attack.sum())
@@ -297,7 +187,7 @@ def report_attack(
     print(f"\n{name}  (eval threshold {threshold:.4f})")
     print(
         f"  eval FPR {fpr:.4f}   exec TPR {tpr:.3f} ({hits}/{total})   "
-        f"rounds {detected}/{rounds}   techniques "
+        f"F1 {f1:.3f}   rounds {detected}/{rounds}   techniques "
         f"{sum(1 for entry in stats.values() if entry['detected'])}/{len(stats)}"
     )
     for technique, entry in sorted(
@@ -317,31 +207,7 @@ def report_attack(
                 f"    {scores[i]:8.3f} {mark} {row['comm'][:16]:16s} "
                 f"par={row['parent_comm'][:14]:14s} {' '.join(row['args'][:3])[:54]}"
             )
-    return tpr, fpr, stats
-
-
-def report_benign(name, scores, threshold, rows, top=0):
-    flagged = int((scores >= threshold).sum())
-    total = len(scores)
-    fpr, low, high = wilson(flagged, total)
-    ops = operational_fpr(scores, threshold, rows)
-    print(f"\n{name}  held-out benign (threshold {threshold:.4f})")
-    print(
-        f"  row FPR {fpr:.4f} (95% CI {low:.4f}-{high:.4f}, {flagged}/{total})   "
-        f"session FPR {ops['session_rate']:.4f} "
-        f"({ops['flagged_sessions']}/{ops['sessions']})   "
-        f"alert keys {ops['alert_keys']}/{ops['fingerprints']}"
-    )
-
-    if top:
-        print("  highest scoring held-out benign rows:")
-        for i in np.argsort(scores)[::-1][:top]:
-            row = rows[i]
-            print(
-                f"    {scores[i]:8.3f} {row['comm'][:16]:16s} "
-                f"par={row['parent_comm'][:14]:14s} {' '.join(row['args'][:3])[:54]}"
-            )
-    return fpr, low, high, ops
+    return tpr, fpr, stats, f1
 
 
 def auc(eval_x, labels, excluded):
@@ -370,12 +236,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 examples:
-  split one benign capture (default):
+  train the default capture:
     train.py --train benign --eval attacks --manifest attacks.jsonl
 
-  use separate calibration and test captures:
-    train.py --train benign-fit --holdout benign-cal,benign-test \\
-      --eval attacks --manifest attacks.jsonl
+  use a smaller calibration slice on a large capture:
+    train.py --train benign-60 --calibrate 0.1
 """,
     )
     parser.add_argument(
@@ -387,34 +252,10 @@ examples:
     parser.add_argument("--manifest", default=str(MANIFEST))
     parser.add_argument("--models", default=DEFAULT_MODELS)
     parser.add_argument(
-        "--warmup",
+        "--calibrate",
         type=float,
-        default=0.0,
-        help="discard this many seconds from the start of every capture",
-    )
-    parser.add_argument(
-        "--cooldown",
-        type=float,
-        default=0.0,
-        help="discard this many seconds from the end of benign captures",
-    )
-    parser.add_argument(
-        "--max-duration",
-        type=float,
-        default=0.0,
-        help="ignore rows after this many seconds from the first exec",
-    )
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument(
-        "--split",
-        help="chronological fit,calibrate,test fractions of --train "
-        f"(default {DEFAULT_SPLIT})",
-    )
-    mode.add_argument(
-        "--holdout",
-        metavar="CALIBRATE,TEST",
-        help="separate benign captures used for calibration and test "
-        "instead of splitting --train",
+        default=0.10,
+        help="fraction of benign rows randomly held out for calibration (default 0.10)",
     )
     parser.add_argument(
         "--fpr-target",
@@ -426,7 +267,7 @@ examples:
         "--top",
         type=int,
         default=10,
-        help="print the N highest scoring eval and held-out benign rows",
+        help="print the N highest scoring eval rows",
     )
     parser.add_argument(
         "--disguise",
@@ -448,24 +289,33 @@ examples:
         )
     if not 0 < args.fpr_target < 1:
         raise SystemExit("--fpr-target must be between 0 and 1")
+    if not 0 < args.calibrate < 1:
+        raise SystemExit("--calibrate must be between 0 and 1")
 
-    fit_rows, calibrate_rows, test_rows, split_note = prepare_benign(args)
+    fit_rows, calibrate_rows = split_calibration(load_rows(args.train), args.calibrate)
     print(
-        f"fit {len(fit_rows)} execs   calibrate {len(calibrate_rows)} execs   "
-        f"test {len(test_rows)} execs   ({split_note})"
+        f"fit {len(fit_rows)} execs   calibrate {len(calibrate_rows)} execs "
+        f"({args.calibrate:.0%} of {args.train})"
     )
     if len(fit_rows) < 2:
         raise SystemExit(
-            "fit slice is too small; adjust --warmup, --split or --holdout"
+            "fit slice is too small; lower --calibrate or use a bigger capture"
+        )
+    if not calibrate_rows:
+        raise SystemExit("calibration slice is empty; raise --calibrate")
+    expected = len(calibrate_rows) * args.fpr_target
+    if expected < 10:
+        print(
+            f"warning: only {len(calibrate_rows)} calibration rows for an FPR target "
+            f"of {args.fpr_target}; expect ~{expected:.1f} flagged rows, so the "
+            f"threshold may be noisy. Raise --calibrate or use a larger capture."
         )
 
     rarity = features.build_rarity(fit_rows)
-    for rows in (fit_rows, calibrate_rows, test_rows):
+    for rows in (fit_rows, calibrate_rows):
         features.apply_rarity(rows, rarity)
 
-    fit_x = np.asarray(features.vectorize(fit_rows), dtype=float)
-
-    evaluation = load_rows(args.eval, args.warmup, max_duration=args.max_duration)
+    evaluation = load_rows(args.eval)
     features.apply_rarity(evaluation, rarity)
     manifest = read_manifest(args.manifest)
     labels, excluded = features.label(evaluation, manifest)
@@ -494,14 +344,7 @@ examples:
     for name in args.models.split(","):
         pipeline = fit_pipeline(name, fit_rows)
 
-        if len(calibrate_rows):
-            calibrate_scores = score(pipeline, calibrate_rows)
-        else:
-            print(
-                f"\n{name}: no calibration slice, using group-aware out-of-fold scores"
-            )
-            calibrate_scores = oof_scores(name, fit_rows, fit_x)
-        calibrate_scores = np.asarray(calibrate_scores)
+        calibrate_scores = np.asarray(score(pipeline, calibrate_rows))
         threshold = calibrate_threshold(calibrate_scores, args.fpr_target)
         calibrate_fpr, cal_low, cal_high = wilson(
             int((calibrate_scores >= threshold).sum()), len(calibrate_scores)
@@ -512,7 +355,7 @@ examples:
         disguised_tpr = None
         if disguised_x is not None:
             disguised_scores = -pipeline.score_samples(disguised_x)
-            disguised_tpr, _, _ = report_attack(
+            disguised_tpr, _, _, _ = report_attack(
                 f"{name} [disguised]",
                 disguised_scores,
                 threshold,
@@ -523,7 +366,7 @@ examples:
                 evaluation,
             )
 
-        tpr, _, _ = report_attack(
+        tpr, _, _, eval_f1 = report_attack(
             name,
             eval_scores,
             threshold,
@@ -535,33 +378,19 @@ examples:
             args.top,
         )
 
-        if len(test_rows):
-            test_fpr, low, high, ops = report_benign(
-                name, score(pipeline, test_rows), threshold, test_rows, args.top
-            )
-        else:
-            test_fpr = low = high = None
-            ops = None
-            print(
-                f"\n{name}  held-out benign\n  no test slice; "
-                f"calibrate row FPR {calibrate_fpr:.4f} "
-                f"(95% CI {cal_low:.4f}-{cal_high:.4f})"
-            )
-
         results[name] = {
             "tpr": tpr,
+            "f1": eval_f1,
             "disguised_tpr": disguised_tpr,
             "calibrate_fpr": calibrate_fpr,
-            "test_fpr": test_fpr,
-            "test_ci": (low, high),
-            "operational": ops,
+            "calibrate_ci": (cal_low, cal_high),
             "pipeline": pipeline,
             "threshold": threshold,
         }
 
     print(
-        f"\n{'model':14s} {'TPR':>6s} {'dTPR':>6s} "
-        f"{'cal FPR':>8s} {'test FPR':>8s} {'95% CI':>17s} {'session':>8s}"
+        f"\n{'model':14s} {'TPR':>6s} {'F1':>6s} {'dTPR':>6s} "
+        f"{'cal FPR':>8s} {'95% CI':>17s}"
     )
     for name, result in results.items():
         disguised = (
@@ -569,16 +398,10 @@ examples:
             if result["disguised_tpr"] is not None
             else f"{'-':>6s}"
         )
-        if result["test_fpr"] is None:
-            test_text = f"{'-':>8s} {'-':>17s}"
-            session_text = f"{'-':>8s}"
-        else:
-            low, high = result["test_ci"]
-            test_text = f"{result['test_fpr']:8.4f} {low:8.4f}-{high:<8.4f}"
-            session_text = f"{result['operational']['session_rate']:8.4f}"
+        low, high = result["calibrate_ci"]
         print(
-            f"{name:14s} {result['tpr']:6.3f} {disguised} "
-            f"{result['calibrate_fpr']:8.4f} {test_text} {session_text}"
+            f"{name:14s} {result['tpr']:6.3f} {result['f1']:6.3f} {disguised} "
+            f"{result['calibrate_fpr']:8.4f} {low:8.4f}-{high:<8.4f}"
         )
 
     if args.save:
